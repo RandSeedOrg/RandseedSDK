@@ -275,7 +275,10 @@ async fn handle_is_game_over<G: GameServer>(
                         "auto_next_match" | "wait_for_ready" | "close_room"
                     )
                 });
-                if res.summary.is_none() || !policy_is_supported {
+                let summary_is_valid = res.summary.as_ref().is_some_and(|summary| {
+                    summary.duration_seconds.is_finite() && summary.duration_seconds >= 0.0
+                });
+                if !summary_is_valid || !policy_is_supported {
                     return map_error_to_response(SdkError::Internal(
                         "The game returned an invalid game-over result.".into(),
                     ))

@@ -95,6 +95,48 @@ async Task VerifyHttpHostAsync()
         await VerifyPostAsync(client, "/isGameOver", "isGameOverRequest", "gameOverResponse");
         await VerifyPostAsync(client, "/onCommand", "commandRequest", "commandResponse");
 
+        foreach (var (summary, expectedStatus) in new[]
+        {
+            ("null", HttpStatusCode.InternalServerError),
+            ("[]", HttpStatusCode.InternalServerError),
+            ("{}", HttpStatusCode.InternalServerError),
+            ("""{"durationSeconds":null}""", HttpStatusCode.InternalServerError),
+            ("""{"durationSeconds":"1"}""", HttpStatusCode.InternalServerError),
+            ("""{"durationSeconds":-1}""", HttpStatusCode.InternalServerError),
+            ("""{"durationSeconds":1e400}""", HttpStatusCode.InternalServerError),
+            ("""{"durationSeconds":0}""", HttpStatusCode.OK),
+            ("""{"durationSeconds":2.5}""", HttpStatusCode.OK)
+        })
+        {
+            using var summaryJson = JsonDocument.Parse(summary);
+            server.GameResultOverride = new GameResult
+            {
+                Over = true,
+                Summary = summaryJson.RootElement.Clone(),
+                NextMatchPolicy = new NextMatchPolicy { Mode = "close_room", TimeoutMs = 0 }
+            };
+            using var response = await PostRawAsync(
+                client, "/isGameOver", fixture.GetProperty("isGameOverRequest").GetRawText());
+            Assert(response.StatusCode == expectedStatus, $"Unexpected status for summary {summary}.");
+            if (expectedStatus == HttpStatusCode.InternalServerError)
+            {
+                Assert((await response.Content.ReadAsStringAsync()).Contains("Internal server error", StringComparison.Ordinal),
+                    "Invalid game-over summary response was not sanitized.");
+            }
+        }
+        server.GameResultOverride = null;
+
+        using (var nullTickRate = await PostRawAsync(client, "/init",
+            """{"matchId":"m","gameId":"room-counter","players":["player-a"],"matchSeq":1,"options":{},"carryover":null,"tickRateHz":null}"""))
+        {
+            Assert(nullTickRate.StatusCode == HttpStatusCode.BadRequest, "Null tickRateHz was accepted.");
+        }
+        using (var omittedTickRate = await PostRawAsync(client, "/init",
+            """{"matchId":"m","gameId":"room-counter","players":["player-a"],"matchSeq":1,"options":{},"carryover":null}"""))
+        {
+            Assert(omittedTickRate.StatusCode == HttpStatusCode.OK, "Omitted tickRateHz was rejected.");
+        }
+
         using (var safeMatchSeq = await PostRawAsync(
             client,
             "/init",
@@ -375,6 +417,8 @@ sealed class FixtureGameServer : IGameServer
 
     public JsonElement? InitStateOverride { get; set; }
 
+    public GameResult? GameResultOverride { get; set; }
+
     public GameManifest GetManifest() => manifest;
 
     public ValueTask<InitResult> InitAsync(MatchConfig config, CancellationToken cancellationToken) =>
@@ -406,7 +450,7 @@ sealed class FixtureGameServer : IGameServer
 
     public ValueTask<GameResult> IsGameOverAsync(
         IsGameOverRequest request,
-        CancellationToken cancellationToken) => ValueTask.FromResult(gameResult);
+        CancellationToken cancellationToken) => ValueTask.FromResult(GameResultOverride ?? gameResult);
 
     public ValueTask<CommandResult> OnCommandAsync(
         CommandRequest request,

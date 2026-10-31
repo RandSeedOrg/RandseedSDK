@@ -44,6 +44,42 @@ func TestGameOverIncludesRequiredZeroTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	func TestIdleTicksReplayCumulativeDuration(t *testing.T) {
+		server := counterServer{}
+		initial, err := encode(counterState{Count: 19})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replay := func() json.RawMessage {
+			state := initial
+			for _, elapsed := range []float64{0.2, 0.4} {
+				result, err := server.Tick(context.Background(), roomhost.TickRequest{
+					Ctx: roomhost.TickContext{ElapsedSeconds: elapsed},
+					State: state,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Persist {
+					t.Fatal("idle ticks should not request an extra snapshot")
+				}
+				state = result.State
+			}
+			return state
+		}
+		original, recovered := replay(), replay()
+		if string(original) != string(recovered) {
+			t.Fatalf("replayed state = %s, want %s", recovered, original)
+		}
+		state, err := decodeState(recovered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.DurationSeconds != 0.4 {
+			t.Fatalf("replayed duration = %v, want 0.4", state.DurationSeconds)
+		}
+	}
 	result, err := (counterServer{}).IsGameOver(context.Background(), roomhost.IsGameOverRequest{State: state})
 	if err != nil {
 		t.Fatal(err)

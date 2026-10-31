@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -196,8 +197,10 @@ public:
             if (data.is_object() && data.contains("count")) {
                 static_cast<void>(read_int64(data.at("count"), count));
             }
+            Json next_state = state.is_object() ? state : Json::object();
+            next_state["count"] = count;
             return CommandResult{
-                .state = Json{{"count", count}},
+                .state = std::move(next_state),
                 .broadcasts =
                     Json::array({Json{{"type", "counter.reset"}}})};
         }
@@ -216,7 +219,11 @@ bool parse_port(std::string_view text, int& port) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+std::unique_ptr<randseed::Game> make_counter_game() {
+    return std::make_unique<CounterGame>();
+}
+
+int run_counter_main(int argc, char** argv) {
     int port = 8080;
     if (argc > 2 ||
         (argc == 2 && !parse_port(argv[1], port))) {

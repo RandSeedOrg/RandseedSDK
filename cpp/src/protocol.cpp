@@ -430,6 +430,18 @@ void to_json(Json& value, const TickResult& result) {
 
 void to_json(Json& value, const GameOverResult& result) {
     value = Json{{"over", result.over}};
+    if (result.over) {
+        if (!result.summary || !result.summary->is_object() ||
+            !result.summary->contains("durationSeconds")) {
+            throw std::invalid_argument("A completed game requires a valid summary");
+        }
+        try {
+            static_cast<void>(require_finite_nonnegative_number(
+                result.summary->at("durationSeconds"), "summary.durationSeconds"));
+        } catch (const ValidationError&) {
+            throw std::invalid_argument("A completed game requires a valid summary");
+        }
+    }
     if (result.summary) {
         value["summary"] = *result.summary;
     }

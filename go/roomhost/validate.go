@@ -179,7 +179,7 @@ func validCommandResult(result CommandResult) bool {
 
 func validGameResult(result GameResult) bool {
 	if result.Over {
-		if !validJSON(result.Summary) || result.NextMatchPolicy == nil {
+		if !validMatchSummary(result.Summary) || result.NextMatchPolicy == nil {
 			return false
 		}
 	}
@@ -198,6 +198,22 @@ func validGameResult(result GameResult) bool {
 		return false
 	}
 	return len(result.NextMatchPolicy.Carryover) == 0 || json.Valid(result.NextMatchPolicy.Carryover)
+}
+
+func validMatchSummary(summary json.RawMessage) bool {
+	fields, ok := objectFields(summary)
+	if !ok {
+		return false
+	}
+	duration, exists := fields["durationSeconds"]
+	if !exists || isJSONNull(duration) {
+		return false
+	}
+	var value float64
+	if err := json.Unmarshal(duration, &value); err != nil {
+		return false
+	}
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
 }
 
 func validBroadcasts(broadcasts []json.RawMessage) bool {

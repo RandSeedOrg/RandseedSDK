@@ -108,8 +108,20 @@ pub struct MatchConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub carryover: Option<serde_json::Value>,
     /// Optional match-specific tick rate in hertz, from 1 through 60.
-    #[serde(rename = "tickRateHz", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "tickRateHz",
+        default,
+        deserialize_with = "deserialize_optional_tick_rate",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub tick_rate_hz: Option<f64>,
+}
+
+fn deserialize_optional_tick_rate<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    f64::deserialize(deserializer).map(Some)
 }
 
 impl MatchConfig {

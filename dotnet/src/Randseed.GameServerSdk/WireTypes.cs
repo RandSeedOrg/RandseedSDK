@@ -64,6 +64,7 @@ public sealed class MatchConfig
 
     [JsonPropertyName("tickRateHz")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonConverter(typeof(OptionalDoubleJsonConverter))]
     public double? TickRateHz { get; init; }
 }
 

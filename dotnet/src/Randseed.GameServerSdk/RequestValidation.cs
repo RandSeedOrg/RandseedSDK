@@ -208,6 +208,15 @@ internal static class RequestValidation
             return "Game-over results require summary and nextMatchPolicy";
         }
 
+        if (result.Summary.ValueKind != JsonValueKind.Object ||
+            !result.Summary.TryGetProperty("durationSeconds", out var duration) ||
+            duration.ValueKind != JsonValueKind.Number ||
+            !duration.TryGetDouble(out var durationSeconds) ||
+            !double.IsFinite(durationSeconds) || durationSeconds < 0d)
+        {
+            return "Game-over summary durationSeconds must be finite and non-negative";
+        }
+
         var policy = result.NextMatchPolicy;
         if (policy.Mode is not ("auto_next_match" or "wait_for_ready" or "close_room") ||
             policy.TimeoutMs < 0)

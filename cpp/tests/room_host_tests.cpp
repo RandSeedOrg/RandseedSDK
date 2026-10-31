@@ -69,11 +69,12 @@ public:
         return player_event_result();
     }
 
-    GameOverResult is_game_over(const Json&) const override {
+    GameOverResult is_game_over(const Json& state) const override {
         const auto& expected = fixture_.at("gameOverResponse");
         return GameOverResult{
             .over = expected.at("over").get<bool>(),
-            .summary = expected.at("summary"),
+            .summary = state.is_object() && state.contains("testSummary")
+                ? state.at("testSummary") : expected.at("summary"),
             .next_match_policy = expected.at("nextMatchPolicy")};
     }
 
@@ -272,6 +273,34 @@ void test_http_lifecycle(const Json& fixture) {
                 fixture.at("isGameOverRequest")),
             200) == fixture.at("gameOverResponse"),
         "POST /isGameOver response differs from fixture");
+    for (const Json& summary : {
+             Json(nullptr), Json::array(), Json::object(),
+             Json{{"durationSeconds", nullptr}}, Json{{"durationSeconds", "1"}},
+             Json{{"durationSeconds", -1}}}) {
+        const auto response = post_json(
+            client, "/isGameOver", Json{{"state", {{"testSummary", summary}}}});
+        const Json error = require_response(response, 500);
+        require(error.at("error") == "Internal server error", "invalid summary was not sanitized");
+    }
+    for (const double duration : {0.0, 2.5}) {
+        const auto response = post_json(client, "/isGameOver",
+            Json{{"state", {{"testSummary", {{"durationSeconds", duration}}}}}});
+        require(require_response(response, 200).at("summary").at("durationSeconds") == duration,
+            "valid game-over duration was rejected");
+    }
+    for (const double duration : {std::numeric_limits<double>::infinity(),
+                                  std::numeric_limits<double>::quiet_NaN()}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(Json(GameOverResult{
+                .over = true,
+                .summary = Json{{"durationSeconds", duration}},
+                .next_match_policy = Json{{"mode", "close_room"}, {"timeoutMs", 0}}}));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "non-finite game-over duration was accepted");
+    }
     require(
         require_response(
             post_json(client, "/onCommand", fixture.at("commandRequest")), 200) ==
