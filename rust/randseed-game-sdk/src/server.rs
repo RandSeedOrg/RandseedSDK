@@ -17,7 +17,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use futures_util::FutureExt;
 use serde::de::DeserializeOwned;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -137,10 +140,17 @@ fn map_error_to_response(err: SdkError) -> (StatusCode, Json<ErrorResponse>) {
     }
 }
 
+async fn call_game<T>(future: impl Future<Output = Result<T, SdkError>>) -> Result<T, SdkError> {
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(result) => result,
+        Err(_) => Err(SdkError::Internal("Game callback panicked.".into())),
+    }
+}
+
 async fn handle_manifest<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match state.game.manifest().await {
+    match call_game(state.game.manifest()).await {
         Ok(manifest) => {
             if manifest.validate().is_err() {
                 return map_error_to_response(SdkError::Internal(
@@ -170,7 +180,7 @@ async fn handle_health<G: GameServer>(State(state): State<Arc<AppState<G>>>) -> 
 async fn handle_agent_capabilities<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match state.game.agent_capabilities().await {
+    match call_game(state.game.agent_capabilities()).await {
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
@@ -201,7 +211,7 @@ async fn handle_init<G: GameServer>(
     if let Err(e) = config.validate() {
         return map_error_to_response(e).into_response();
     }
-    match state.game.init(config).await {
+    match call_game(state.game.init(config)).await {
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
@@ -214,7 +224,7 @@ async fn handle_tick<G: GameServer>(
     if let Err(e) = req.ctx.validate() {
         return map_error_to_response(e).into_response();
     }
-    match state.game.tick(req.ctx, req.state).await {
+    match call_game(state.game.tick(req.ctx, req.state)).await {
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
@@ -230,7 +240,7 @@ async fn handle_player_join<G: GameServer>(
         ))
         .into_response();
     }
-    match state.game.on_player_join(req.player_id, req.state).await {
+    match call_game(state.game.on_player_join(req.player_id, req.state)).await {
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
@@ -246,7 +256,7 @@ async fn handle_player_leave<G: GameServer>(
         ))
         .into_response();
     }
-    match state.game.on_player_leave(req.player_id, req.state).await {
+    match call_game(state.game.on_player_leave(req.player_id, req.state)).await {
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
@@ -256,7 +266,7 @@ async fn handle_is_game_over<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
     ProtocolJson(req): ProtocolJson<IsGameOverRequest>,
 ) -> impl IntoResponse {
-    match state.game.is_game_over(req.state).await {
+    match call_game(state.game.is_game_over(req.state)).await {
         Ok(res) => {
             if res.over {
                 let policy_is_supported = res.next_match_policy.as_ref().is_some_and(|policy| {
@@ -288,7 +298,7 @@ async fn handle_command<G: GameServer>(
         ))
         .into_response();
     }
-    match state.game.on_command(req.command, req.state).await {
+    match call_game(state.game.on_command(req.command, req.state)).await {
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }

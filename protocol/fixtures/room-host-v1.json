@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "minPlayers": 1,
     "maxPlayers": 4,
-    "tickRateHz": 5,
+    "tickRateHz": 2.5,
     "persistentTable": false
   },
   "config": {
@@ -15,7 +15,7 @@
     "matchSeq": 2,
     "options": { "seed": 4294967295, "mode": "ranked" },
     "carryover": 17,
-    "tickRateHz": 5
+    "tickRateHz": 2.5
   },
   "initResponse": {
     "state": { "count": 17, "players": ["pairwise-a", "pairwise-b"] },

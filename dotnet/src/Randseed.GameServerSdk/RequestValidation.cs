@@ -25,7 +25,7 @@ internal static class RequestValidation
             return "Manifest player limits are invalid";
         }
 
-        if (manifest.TickRateHz is < 1 or > 60)
+        if (!double.IsFinite(manifest.TickRateHz) || manifest.TickRateHz is < 1 or > 60)
         {
             return "Manifest tick rate must be between 1 and 60";
         }
@@ -78,7 +78,8 @@ internal static class RequestValidation
             return "carryover is required";
         }
 
-        if (config.TickRateHz is < 1 or > 60)
+        if (config.TickRateHz is double tickRateHz &&
+            (!double.IsFinite(tickRateHz) || tickRateHz is < 1 or > 60))
         {
             return "tickRateHz must be between 1 and 60";
         }

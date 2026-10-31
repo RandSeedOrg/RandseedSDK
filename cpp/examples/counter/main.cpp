@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -46,6 +47,15 @@ std::int64_t state_count(const Json& state) {
     return read_int64(state.at("count"), count) ? count : 0;
 }
 
+double state_duration_seconds(const Json& state) {
+    if (!state.is_object() || !state.contains("durationSeconds") ||
+        !state.at("durationSeconds").is_number()) {
+        return 0.0;
+    }
+    const double duration = state.at("durationSeconds").get<double>();
+    return std::isfinite(duration) && duration >= 0.0 ? duration : 0.0;
+}
+
 std::int64_t saturating_add(std::int64_t left, std::int64_t right) {
     if (right > 0 &&
         left > std::numeric_limits<std::int64_t>::max() - right) {
@@ -66,7 +76,7 @@ public:
             .version = "1.0.0",
             .min_players = 1,
             .max_players = 4,
-            .tick_rate_hz = 5,
+            .tick_rate_hz = 5.0,
             .persistent_table = false,
             .options_schema = std::nullopt};
     }
@@ -75,7 +85,10 @@ public:
         std::int64_t initial_count = 0;
         static_cast<void>(read_int64(config.carryover, initial_count));
         return InitResult{
-            .state = Json{{"count", initial_count}, {"players", config.players}},
+            .state = Json{
+                {"count", initial_count},
+                {"durationSeconds", 0.0},
+                {"players", config.players}},
             .broadcasts = Json::array({Json{{"type", "started"}}})};
     }
 
@@ -101,7 +114,9 @@ public:
                 Json{{"type", "counter.changed"}, {"count", count}});
         }
         return TickResult{
-            .state = Json{{"count", count}},
+            .state = Json{
+                {"count", count},
+                {"durationSeconds", context.elapsed_seconds}},
             .broadcasts = std::move(broadcasts),
             .persist = changed};
     }
@@ -165,7 +180,9 @@ public:
         }
         return GameOverResult{
             .over = true,
-            .summary = Json{{"count", state_count(state)}},
+            .summary = Json{
+                {"count", state_count(state)},
+                {"durationSeconds", state_duration_seconds(state)}},
             .next_match_policy =
                 Json{{"mode", "close_room"}, {"timeoutMs", 0}}};
     }

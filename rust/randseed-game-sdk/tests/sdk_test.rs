@@ -280,6 +280,9 @@ impl GameServer for MockGame {
         cmd: GameCommand,
         mut state: serde_json::Value,
     ) -> Result<CommandResult, SdkError> {
+        if cmd.command_type == "panic" {
+            panic!("private callback panic detail");
+        }
         if cmd.command_type == "internal_error" {
             return Err(SdkError::Internal(
                 "Sensitive backend detail: DATABASE_PASSWORD=do-not-leak".into(),
@@ -581,6 +584,27 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 500);
     let error_body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(error_body, json!({ "error": "Internal server error." }));
+
+    let panic_req = json!({
+        "command": { "type": "panic", "data": {} },
+        "state": {}
+    });
+    let resp = client
+        .post(format!("{}/onCommand", base_url))
+        .json(&panic_req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let panic_error: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(panic_error, json!({ "error": "Internal server error." }));
+
+    let resp = client
+        .get(format!("{}/health", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
     assert!(!error_body
         .to_string()
         .contains("DATABASE_PASSWORD=do-not-leak"));

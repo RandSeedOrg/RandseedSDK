@@ -16,7 +16,8 @@ func validManifest(manifest GameManifest) bool {
 	if manifest.MinPlayers < 1 || manifest.MaxPlayers < manifest.MinPlayers || manifest.MaxPlayers > 100 {
 		return false
 	}
-	if manifest.TickRateHz < 1 || manifest.TickRateHz > 60 {
+	if math.IsNaN(manifest.TickRateHz) || math.IsInf(manifest.TickRateHz, 0) ||
+		manifest.TickRateHz < 1 || manifest.TickRateHz > 60 {
 		return false
 	}
 	return len(manifest.OptionsSchema) == 0 || validOptionsSchema(manifest.OptionsSchema)
@@ -42,7 +43,9 @@ func validMatchConfig(config MatchConfig, data []byte) bool {
 		}
 		players[playerID] = struct{}{}
 	}
-	if config.TickRateHz != nil && (*config.TickRateHz < 1 || *config.TickRateHz > 60) {
+	if config.TickRateHz != nil &&
+		(math.IsNaN(*config.TickRateHz) || math.IsInf(*config.TickRateHz, 0) ||
+			*config.TickRateHz < 1 || *config.TickRateHz > 60) {
 		return false
 	}
 	fields, ok := objectFields(data)
@@ -191,7 +194,7 @@ func validGameResult(result GameResult) bool {
 	default:
 		return false
 	}
-	if result.NextMatchPolicy.TimeoutMS != nil && *result.NextMatchPolicy.TimeoutMS < 0 {
+	if result.NextMatchPolicy.TimeoutMS < 0 {
 		return false
 	}
 	return len(result.NextMatchPolicy.Carryover) == 0 || json.Valid(result.NextMatchPolicy.Carryover)

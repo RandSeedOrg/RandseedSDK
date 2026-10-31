@@ -250,6 +250,22 @@ async Task VerifyHttpHostAsync()
             Assert(!failureText.Contains("private callback detail", StringComparison.Ordinal),
                 "Callback exception details leaked to the client.");
         }
+        server.ThrowOnTick = false;
+        server.ThrowJsonOnTick = true;
+        using var callbackJsonClient = new HttpClient { BaseAddress = baseAddress };
+        using (var failedJsonCallback = await PostRawAsync(
+            callbackJsonClient,
+            "/tick",
+            fixture.GetProperty("tickRequest").GetRawText()))
+        {
+            Assert(failedJsonCallback.StatusCode == HttpStatusCode.InternalServerError,
+                "A callback JsonException was misclassified as a client error.");
+            var failureText = await failedJsonCallback.Content.ReadAsStringAsync();
+            Assert(failureText.Contains("Internal server error", StringComparison.Ordinal),
+                "Callback JsonException response was not sanitized.");
+            Assert(!failureText.Contains("private callback detail", StringComparison.Ordinal),
+                "Callback JsonException details leaked to the client.");
+        }
     }
     finally
     {
@@ -355,6 +371,8 @@ sealed class FixtureGameServer : IGameServer
 
     public bool ThrowOnTick { get; set; }
 
+    public bool ThrowJsonOnTick { get; set; }
+
     public JsonElement? InitStateOverride { get; set; }
 
     public GameManifest GetManifest() => manifest;
@@ -369,6 +387,10 @@ sealed class FixtureGameServer : IGameServer
         if (ThrowOnTick)
         {
             throw new InvalidOperationException("private callback detail");
+        }
+        if (ThrowJsonOnTick)
+        {
+            throw new JsonException("private callback detail");
         }
 
         return ValueTask.FromResult(tickResult);

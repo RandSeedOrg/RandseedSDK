@@ -23,7 +23,7 @@ struct GameManifest {
     std::string version;
     std::uint32_t min_players{1};
     std::uint32_t max_players{1};
-    std::uint32_t tick_rate_hz{1};
+    double tick_rate_hz{1.0};
     bool persistent_table{false};
     std::optional<Json> options_schema;
 };
@@ -35,7 +35,7 @@ struct MatchConfig {
     std::uint64_t match_seq{0};
     Json options{Json::object()};
     Json carryover{nullptr};
-    std::optional<std::uint32_t> tick_rate_hz;
+    std::optional<double> tick_rate_hz;
 };
 
 struct TickInput {
