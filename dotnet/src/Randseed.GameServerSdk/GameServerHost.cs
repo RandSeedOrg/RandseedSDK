@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
@@ -79,13 +80,13 @@ public static class GameServerHost
                 RoomHostJson.HostOptions);
         });
 
-        app.MapPost("/init", (HttpContext context) => HandleJsonAsync<MatchConfig, InitResult>(
+        app.MapPost("/init", (Delegate)((HttpContext context) => HandleJsonAsync<MatchConfig, InitResult>(
             context,
             config => RequestValidation.MatchConfig(config, GetValidManifest(gameServer), gameId),
             (config, cancellationToken) => gameServer.InitAsync(config, cancellationToken),
-            RequestValidation.InitResult));
+            RequestValidation.InitResult)));
 
-        app.MapPost("/tick", (HttpContext context) => HandleJsonAsync<TickRequest, TickResult>(
+        app.MapPost("/tick", (Delegate)((HttpContext context) => HandleJsonAsync<TickRequest, TickResult>(
             context,
             RequestValidation.Tick,
             (request, cancellationToken) =>
@@ -95,31 +96,31 @@ public static class GameServerHost
                     : request;
                 return gameServer.TickAsync(normalized, cancellationToken);
             },
-            RequestValidation.TickResult));
+            RequestValidation.TickResult)));
 
-        app.MapPost("/onPlayerJoin", (HttpContext context) => HandleJsonAsync<PlayerEventRequest, PlayerEventResult>(
+        app.MapPost("/onPlayerJoin", (Delegate)((HttpContext context) => HandleJsonAsync<PlayerEventRequest, PlayerEventResult>(
             context,
             RequestValidation.PlayerEvent,
             gameServer.OnPlayerJoinAsync,
-            RequestValidation.PlayerEventResult));
+            RequestValidation.PlayerEventResult)));
 
-        app.MapPost("/onPlayerLeave", (HttpContext context) => HandleJsonAsync<PlayerEventRequest, PlayerEventResult>(
+        app.MapPost("/onPlayerLeave", (Delegate)((HttpContext context) => HandleJsonAsync<PlayerEventRequest, PlayerEventResult>(
             context,
             RequestValidation.PlayerEvent,
             gameServer.OnPlayerLeaveAsync,
-            RequestValidation.PlayerEventResult));
+            RequestValidation.PlayerEventResult)));
 
-        app.MapPost("/isGameOver", (HttpContext context) => HandleJsonAsync<IsGameOverRequest, GameResult>(
+        app.MapPost("/isGameOver", (Delegate)((HttpContext context) => HandleJsonAsync<IsGameOverRequest, GameResult>(
             context,
             RequestValidation.GameOver,
             gameServer.IsGameOverAsync,
-            RequestValidation.GameResult));
+            RequestValidation.GameResult)));
 
-        app.MapPost("/onCommand", (HttpContext context) => HandleJsonAsync<CommandRequest, CommandResult>(
+        app.MapPost("/onCommand", (Delegate)((HttpContext context) => HandleJsonAsync<CommandRequest, CommandResult>(
             context,
             RequestValidation.Command,
             gameServer.OnCommandAsync,
-            RequestValidation.CommandResult));
+            RequestValidation.CommandResult)));
 
         return app;
     }
