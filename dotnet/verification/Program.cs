@@ -74,7 +74,8 @@ async Task VerifyHttpHostAsync()
         var addresses = app.Services.GetRequiredService<IServer>()
             .Features.Get<IServerAddressesFeature>()?.Addresses
             ?? throw new InvalidOperationException("The HTTP server did not publish its bound address.");
-        using var client = new HttpClient { BaseAddress = new Uri(addresses.Single()) };
+        var baseAddress = new Uri(addresses.Single());
+        using var client = new HttpClient { BaseAddress = baseAddress };
 
         await VerifyGetAsync(client, "/manifest", fixture.GetProperty("manifest"));
 
@@ -237,8 +238,9 @@ async Task VerifyHttpHostAsync()
         }
 
         server.ThrowOnTick = true;
+        using var callbackClient = new HttpClient { BaseAddress = baseAddress };
         using (var failedCallback = await PostRawAsync(
-            client,
+            callbackClient,
             "/tick",
             fixture.GetProperty("tickRequest").GetRawText()))
         {
