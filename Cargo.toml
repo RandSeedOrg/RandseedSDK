@@ -1,0 +1,3 @@
+[workspace]
+members = ["rust/randseed-game-sdk"]
+resolver = "2"

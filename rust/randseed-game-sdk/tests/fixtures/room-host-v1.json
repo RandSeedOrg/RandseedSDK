@@ -1,0 +1,65 @@
+{
+  "protocolVersion": 1,
+  "manifest": {
+    "title": "Room Counter",
+    "version": "1.0.0",
+    "minPlayers": 1,
+    "maxPlayers": 4,
+    "tickRateHz": 5,
+    "persistentTable": false
+  },
+  "config": {
+    "matchId": "match-1",
+    "gameId": "room-counter",
+    "players": ["pairwise-a", "pairwise-b"],
+    "matchSeq": 2,
+    "options": { "seed": 4294967295, "mode": "ranked" },
+    "carryover": 17,
+    "tickRateHz": 5
+  },
+  "initResponse": {
+    "state": { "count": 17, "players": ["pairwise-a", "pairwise-b"] },
+    "broadcasts": [{ "type": "started" }]
+  },
+  "tickRequest": {
+    "ctx": {
+      "tick": 1,
+      "inputs": [{ "playerId": "pairwise-a", "data": { "delta": 1 } }],
+      "commands": [],
+      "elapsedSeconds": 0.2
+    },
+    "state": { "count": 17 }
+  },
+  "tickResponse": {
+    "state": { "count": 18 },
+    "broadcasts": [{ "type": "counter.changed", "count": 18 }],
+    "persist": true
+  },
+  "playerEventRequest": {
+    "playerId": "pairwise-b",
+    "state": { "count": 18, "players": ["pairwise-a"] }
+  },
+  "playerEventResponse": {
+    "state": { "count": 18, "players": ["pairwise-a", "pairwise-b"] },
+    "broadcasts": [{ "type": "player_joined", "playerId": "pairwise-b" }]
+  },
+  "isGameOverRequest": { "state": { "count": 20 } },
+  "gameOverResponse": {
+    "over": true,
+    "summary": { "durationSeconds": 0.2 },
+    "nextMatchPolicy": { "mode": "auto_next_match", "timeoutMs": 0, "carryover": 17 }
+  },
+  "commandRequest": {
+    "command": { "type": "reset", "data": { "count": 0 }, "issuer": "host" },
+    "state": { "count": 20 }
+  },
+  "commandResponse": {
+    "state": { "count": 0 },
+    "broadcasts": [{ "type": "counter.reset" }]
+  },
+  "prngVectors": [
+    { "seed": 0, "u32": [1144304738, 1416247, 958946056, 627933444, 2007157716] },
+    { "seed": 1, "u32": [2693262067, 11749833, 2265367787, 4213581821, 4159151403] },
+    { "seed": 4294967295, "u32": [3850105811, 813802916, 3073704848, 4054706436, 3630262831] }
+  ]
+}

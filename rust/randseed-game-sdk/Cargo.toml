@@ -1,0 +1,26 @@
+[package]
+name = "randseed-game-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for building deterministic RandSeed room-host game servers"
+license = "MIT"
+repository = "https://github.com/RandSeedOrg/RandseedSDK"
+readme = "README.md"
+keywords = ["randseed", "game-server", "multiplayer", "room-host"]
+categories = ["game-development", "web-programming::http-server"]
+include = ["Cargo.toml", "README.md", "src/**", "tests/**", "examples/**"]
+
+[dependencies]
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+urlencoding = "2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
