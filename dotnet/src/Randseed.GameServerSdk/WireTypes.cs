@@ -23,7 +23,7 @@ public sealed class GameManifest
 
     [JsonPropertyName("tickRateHz")]
     [JsonRequired]
-    public int TickRateHz { get; init; }
+    public double TickRateHz { get; init; }
 
     [JsonPropertyName("persistentTable")]
     [JsonRequired]
@@ -64,7 +64,8 @@ public sealed class MatchConfig
 
     [JsonPropertyName("tickRateHz")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? TickRateHz { get; init; }
+    [JsonConverter(typeof(OptionalDoubleJsonConverter))]
+    public double? TickRateHz { get; init; }
 }
 
 public sealed class InitResult

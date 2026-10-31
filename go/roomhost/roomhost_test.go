@@ -137,6 +137,51 @@ func TestHandlerRoutesMatchSharedFixture(t *testing.T) {
 	}
 }
 
+type summaryServer struct {
+	fixtureServer
+	summary json.RawMessage
+}
+
+func (s summaryServer) IsGameOver(context.Context, IsGameOverRequest) (GameResult, error) {
+	return GameResult{
+		Over: true,
+		Summary: s.summary,
+		NextMatchPolicy: &NextMatchPolicy{Mode: NextMatchCloseRoom},
+	}, nil
+}
+
+func TestGameOverSummaryValidation(t *testing.T) {
+	fixture := loadFixture(t)
+	tests := []struct {
+		name string
+		summary string
+		status int
+	}{
+		{"missing", ``, http.StatusInternalServerError},
+		{"null", `null`, http.StatusInternalServerError},
+		{"array", `[]`, http.StatusInternalServerError},
+		{"missing duration", `{}`, http.StatusInternalServerError},
+		{"null duration", `{"durationSeconds":null}`, http.StatusInternalServerError},
+		{"string duration", `{"durationSeconds":"1"}`, http.StatusInternalServerError},
+		{"negative duration", `{"durationSeconds":-1}`, http.StatusInternalServerError},
+		{"overflow duration", `{"durationSeconds":1e400}`, http.StatusInternalServerError},
+		{"zero duration", `{"durationSeconds":0}`, http.StatusOK},
+		{"fractional duration", `{"durationSeconds":2.5}`, http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := NewHandler(summaryServer{fixtureServer{fixture}, json.RawMessage(tc.summary)})
+			response := serveRequest(t, handler, http.MethodPost, "/isGameOver", fixture.IsGameOverRequest)
+			if response.Code != tc.status {
+				t.Fatalf("status = %d, want %d; response: %s", response.Code, tc.status, response.Body)
+			}
+			if tc.status == http.StatusInternalServerError && !strings.Contains(response.Body.String(), "internal server error") {
+				t.Fatalf("response was not sanitized: %s", response.Body)
+			}
+		})
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	fixture := loadFixture(t)
 	handler := NewHandlerWithOptions(fixtureServer{fixture: fixture}, HandlerOptions{

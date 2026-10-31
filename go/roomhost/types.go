@@ -12,7 +12,7 @@ type GameManifest struct {
 	Version         string          `json:"version"`
 	MinPlayers      int             `json:"minPlayers"`
 	MaxPlayers      int             `json:"maxPlayers"`
-	TickRateHz      int             `json:"tickRateHz"`
+	TickRateHz      float64         `json:"tickRateHz"`
 	PersistentTable bool            `json:"persistentTable"`
 	OptionsSchema   json.RawMessage `json:"optionsSchema,omitempty"`
 }
@@ -25,7 +25,7 @@ type MatchConfig struct {
 	MatchSeq   int64           `json:"matchSeq"`
 	Options    json.RawMessage `json:"options,omitempty"`
 	Carryover  json.RawMessage `json:"carryover,omitempty"`
-	TickRateHz *int            `json:"tickRateHz,omitempty"`
+	TickRateHz *float64        `json:"tickRateHz,omitempty"`
 }
 
 // PlayerInput is one player's JSON payload for a simulation tick.
@@ -107,7 +107,7 @@ const (
 // NextMatchPolicy describes the host's next-match behavior.
 type NextMatchPolicy struct {
 	Mode       NextMatchMode   `json:"mode"`
-	TimeoutMS  *int64          `json:"timeoutMs,omitempty"`
+	TimeoutMS  int64           `json:"timeoutMs"`
 	Carryover  json.RawMessage `json:"carryover,omitempty"`
 }
 

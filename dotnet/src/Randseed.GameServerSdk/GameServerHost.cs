@@ -178,29 +178,12 @@ public static class GameServerHost
             return Error(StatusCodes.Status400BadRequest, "Expected an application/json request body");
         }
 
+        TRequest? request;
         try
         {
-            var request = await context.Request.ReadFromJsonAsync<TRequest>(
+            request = await context.Request.ReadFromJsonAsync<TRequest>(
                 RoomHostJson.HostOptions,
                 context.RequestAborted);
-            if (request is null)
-            {
-                return Error(StatusCodes.Status400BadRequest, "Request body must be a JSON object");
-            }
-
-            var requestError = validateRequest(request);
-            if (requestError is not null)
-            {
-                return Error(StatusCodes.Status400BadRequest, requestError);
-            }
-
-            var response = await execute(request, context.RequestAborted);
-            if (validateResponse(response) is not null)
-            {
-                return Error(StatusCodes.Status500InternalServerError, "Internal server error");
-            }
-
-            return Results.Json(response, RoomHostJson.HostOptions);
         }
         catch (JsonException)
         {
@@ -216,6 +199,28 @@ public static class GameServerHost
                 statusCode == StatusCodes.Status413PayloadTooLarge
                     ? "Request body too large"
                     : "Invalid request");
+        }
+
+        if (request is null)
+        {
+            return Error(StatusCodes.Status400BadRequest, "Request body must be a JSON object");
+        }
+
+        var requestError = validateRequest(request);
+        if (requestError is not null)
+        {
+            return Error(StatusCodes.Status400BadRequest, requestError);
+        }
+
+        try
+        {
+            var response = await execute(request, context.RequestAborted);
+            if (validateResponse(response) is not null)
+            {
+                return Error(StatusCodes.Status500InternalServerError, "Internal server error");
+            }
+
+            return Results.Json(response, RoomHostJson.HostOptions);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {

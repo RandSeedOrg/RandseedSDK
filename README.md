@@ -35,5 +35,6 @@ Mulberry32 test vectors.
 The room host owns scheduling, authoritative persistence, player identity,
 and recovery. Game code must calculate from the supplied state and context;
 it must not run a separate authoritative timer or rely on process-global match
-state. The optional GameVRF integration is deliberately outside this core
-protocol.
+state. The current server SDKs and room host do not include a GameVRF client
+or call the GameVRF canister; VRF is not currently available through this room
+runtime.

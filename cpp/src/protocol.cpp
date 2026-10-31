@@ -91,6 +91,21 @@ std::uint32_t require_bounded_integer(
     return static_cast<std::uint32_t>(result);
 }
 
+double require_bounded_number(
+    const Json& value,
+    std::string_view field,
+    double minimum,
+    double maximum) {
+    if (!value.is_number()) {
+        throw ValidationError(std::string(field) + " must be a number");
+    }
+    const double result = value.get<double>();
+    if (!std::isfinite(result) || result < minimum || result > maximum) {
+        throw ValidationError(std::string(field) + " is out of range");
+    }
+    return result;
+}
+
 double require_finite_nonnegative_number(
     const Json& value,
     std::string_view field) {
@@ -174,7 +189,8 @@ void validate_game_manifest(const GameManifest& manifest) {
         manifest.max_players > 100) {
         throw ValidationError("manifest.maxPlayers is out of range");
     }
-    if (manifest.tick_rate_hz < 1 || manifest.tick_rate_hz > 60) {
+    if (!std::isfinite(manifest.tick_rate_hz) ||
+        manifest.tick_rate_hz < 1 || manifest.tick_rate_hz > 60) {
         throw ValidationError("manifest.tickRateHz is out of range");
     }
 }
@@ -193,7 +209,7 @@ GameManifest parse_game_manifest(const Json& value) {
         "maxPlayers",
         manifest.min_players,
         100);
-    manifest.tick_rate_hz = require_bounded_integer(
+    manifest.tick_rate_hz = require_bounded_number(
         require_field(value, "tickRateHz", "manifest"), "tickRateHz", 1, 60);
     const auto& persistent =
         require_field(value, "persistentTable", "manifest");
@@ -242,7 +258,7 @@ MatchConfig parse_match_config(const Json& value) {
     config.carryover = require_field(value, "carryover");
 
     if (value.contains("tickRateHz")) {
-        config.tick_rate_hz = require_bounded_integer(
+        config.tick_rate_hz = require_bounded_number(
             value.at("tickRateHz"), "tickRateHz", 1, 60);
     }
     return config;
@@ -414,6 +430,18 @@ void to_json(Json& value, const TickResult& result) {
 
 void to_json(Json& value, const GameOverResult& result) {
     value = Json{{"over", result.over}};
+    if (result.over) {
+        if (!result.summary || !result.summary->is_object() ||
+            !result.summary->contains("durationSeconds")) {
+            throw std::invalid_argument("A completed game requires a valid summary");
+        }
+        try {
+            static_cast<void>(require_finite_nonnegative_number(
+                result.summary->at("durationSeconds"), "summary.durationSeconds"));
+        } catch (const ValidationError&) {
+            throw std::invalid_argument("A completed game requires a valid summary");
+        }
+    }
     if (result.summary) {
         value["summary"] = *result.summary;
     }

@@ -25,7 +25,7 @@ internal static class RequestValidation
             return "Manifest player limits are invalid";
         }
 
-        if (manifest.TickRateHz is < 1 or > 60)
+        if (!double.IsFinite(manifest.TickRateHz) || manifest.TickRateHz is < 1 or > 60)
         {
             return "Manifest tick rate must be between 1 and 60";
         }
@@ -78,7 +78,8 @@ internal static class RequestValidation
             return "carryover is required";
         }
 
-        if (config.TickRateHz is < 1 or > 60)
+        if (config.TickRateHz is double tickRateHz &&
+            (!double.IsFinite(tickRateHz) || tickRateHz is < 1 or > 60))
         {
             return "tickRateHz must be between 1 and 60";
         }
@@ -205,6 +206,15 @@ internal static class RequestValidation
         if (!IsDefined(result.Summary) || result.NextMatchPolicy is null)
         {
             return "Game-over results require summary and nextMatchPolicy";
+        }
+
+        if (result.Summary.ValueKind != JsonValueKind.Object ||
+            !result.Summary.TryGetProperty("durationSeconds", out var duration) ||
+            duration.ValueKind != JsonValueKind.Number ||
+            !duration.TryGetDouble(out var durationSeconds) ||
+            !double.IsFinite(durationSeconds) || durationSeconds < 0d)
+        {
+            return "Game-over summary durationSeconds must be finite and non-negative";
         }
 
         var policy = result.NextMatchPolicy;

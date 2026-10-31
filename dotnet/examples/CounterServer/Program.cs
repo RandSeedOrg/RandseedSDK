@@ -23,7 +23,7 @@ internal sealed class CounterGameServer : IGameServer
             config.Carryover.TryGetInt32(out var carryoverCount)
                 ? carryoverCount
                 : 0;
-        var state = CreateState(initialCount, config.Players);
+        var state = CreateState(initialCount, config.Players, 0d);
 
         return ValueTask.FromResult(new InitResult
         {
@@ -34,7 +34,7 @@ internal sealed class CounterGameServer : IGameServer
 
     public ValueTask<TickResult> TickAsync(TickRequest request, CancellationToken cancellationToken)
     {
-        var (count, players) = ReadState(request.State);
+        var (count, players, _) = ReadState(request.State);
         foreach (var input in request.Ctx.Inputs!)
         {
             if (input.Data.ValueKind == JsonValueKind.Object &&
@@ -47,7 +47,7 @@ internal sealed class CounterGameServer : IGameServer
 
         return ValueTask.FromResult(new TickResult
         {
-            State = CreateState(count, players),
+            State = CreateState(count, players, request.Ctx.ElapsedSeconds),
             Broadcasts = GameJson.ToElement(new[] { new { type = "counter.changed", count } }),
             Persist = true
         });
@@ -57,14 +57,14 @@ internal sealed class CounterGameServer : IGameServer
         PlayerEventRequest request,
         CancellationToken cancellationToken)
     {
-        var (count, players) = ReadState(request.State);
+        var (count, players, durationSeconds) = ReadState(request.State);
         var updatedPlayers = players.Contains(request.PlayerId, StringComparer.Ordinal)
             ? players
             : players.Append(request.PlayerId).ToArray();
 
         return ValueTask.FromResult(new PlayerEventResult
         {
-            State = CreateState(count, updatedPlayers),
+            State = CreateState(count, updatedPlayers, durationSeconds),
             Broadcasts = GameJson.ToElement(new[] { new { type = "player_joined", playerId = request.PlayerId } })
         });
     }
@@ -73,13 +73,13 @@ internal sealed class CounterGameServer : IGameServer
         PlayerEventRequest request,
         CancellationToken cancellationToken)
     {
-        var (count, players) = ReadState(request.State);
+        var (count, players, durationSeconds) = ReadState(request.State);
         var updatedPlayers = players.Where(playerId =>
             !string.Equals(playerId, request.PlayerId, StringComparison.Ordinal)).ToArray();
 
         return ValueTask.FromResult(new PlayerEventResult
         {
-            State = CreateState(count, updatedPlayers),
+            State = CreateState(count, updatedPlayers, durationSeconds),
             Broadcasts = GameJson.ToElement(new[] { new { type = "player_left", playerId = request.PlayerId } })
         });
     }
@@ -88,13 +88,13 @@ internal sealed class CounterGameServer : IGameServer
         IsGameOverRequest request,
         CancellationToken cancellationToken)
     {
-        var (count, _) = ReadState(request.State);
+        var (count, _, durationSeconds) = ReadState(request.State);
         var over = count >= 20;
 
         return ValueTask.FromResult(new GameResult
         {
             Over = over,
-            Summary = over ? GameJson.ToElement(new { finalCount = count }) : default,
+            Summary = over ? GameJson.ToElement(new { finalCount = count, durationSeconds }) : default,
             NextMatchPolicy = over
                 ? new NextMatchPolicy
                 {
@@ -110,7 +110,7 @@ internal sealed class CounterGameServer : IGameServer
         CommandRequest request,
         CancellationToken cancellationToken)
     {
-        var (count, players) = ReadState(request.State);
+        var (count, players, durationSeconds) = ReadState(request.State);
         if (request.Command.Type == "reset")
         {
             count = request.Command.Data.ValueKind == JsonValueKind.Object &&
@@ -122,19 +122,22 @@ internal sealed class CounterGameServer : IGameServer
 
         return ValueTask.FromResult(new CommandResult
         {
-            State = CreateState(count, players),
+            State = CreateState(count, players, durationSeconds),
             Broadcasts = GameJson.ToElement(new[] { new { type = "counter.reset" } })
         });
     }
 
-    private static JsonElement CreateState(int count, IReadOnlyList<string> players) =>
-        GameJson.ToElement(new { count, players });
+    private static JsonElement CreateState(
+        int count,
+        IReadOnlyList<string> players,
+        double durationSeconds) =>
+        GameJson.ToElement(new { count, players, durationSeconds });
 
-    private static (int Count, string[] Players) ReadState(JsonElement state)
+    private static (int Count, string[] Players, double DurationSeconds) ReadState(JsonElement state)
     {
         if (state.ValueKind != JsonValueKind.Object)
         {
-            return (0, Array.Empty<string>());
+            return (0, Array.Empty<string>(), 0d);
         }
 
         var count = state.TryGetProperty("count", out var countElement) &&
@@ -148,7 +151,13 @@ internal sealed class CounterGameServer : IGameServer
                 .Select(player => player.GetString()!)
                 .ToArray()
             : Array.Empty<string>();
+        var durationSeconds = state.TryGetProperty("durationSeconds", out var durationElement) &&
+                              durationElement.TryGetDouble(out var duration) &&
+                              double.IsFinite(duration) &&
+                              duration >= 0d
+            ? duration
+            : 0d;
 
-        return (count, players);
+        return (count, players, durationSeconds);
     }
 }

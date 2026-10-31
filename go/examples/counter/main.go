@@ -61,7 +61,7 @@ func (counterServer) Tick(_ context.Context, request roomhost.TickRequest) (room
 		return roomhost.TickResult{}, err
 	}
 	previousCount := state.Count
-	state.DurationSeconds += request.Ctx.ElapsedSeconds
+	state.DurationSeconds = request.Ctx.ElapsedSeconds
 	for _, input := range request.Ctx.Inputs {
 		var data struct {
 			Delta *int64 `json:"delta"`
@@ -176,13 +176,12 @@ func (counterServer) IsGameOver(_ context.Context, request roomhost.IsGameOverRe
 			return roomhost.GameResult{}, err
 		}
 	}
-	timeout := int64(0)
 	return roomhost.GameResult{
 		Over:    true,
 		Summary: summary,
 		NextMatchPolicy: &roomhost.NextMatchPolicy{
 			Mode:      roomhost.NextMatchAutoNextMatch,
-			TimeoutMS: &timeout,
+			TimeoutMS: 0,
 			Carryover: carryover,
 		},
 	}, nil

@@ -43,6 +43,15 @@ fn room_host_wire_roundtrips_opaque_carryover_and_frame_context() {
     assert_eq!(config.carryover, Some(json!(17)));
     assert_eq!(config.options.seed, u32::MAX as f64);
     assert_json_roundtrip::<MatchConfig>(&fixture["config"], fixture["config"].clone());
+    let mut null_tick_rate = fixture["config"].clone();
+    null_tick_rate["tickRateHz"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<MatchConfig>(null_tick_rate).is_err());
+    let mut missing_tick_rate = fixture["config"].clone();
+    missing_tick_rate
+        .as_object_mut()
+        .unwrap()
+        .remove("tickRateHz");
+    assert!(serde_json::from_value::<MatchConfig>(missing_tick_rate).is_ok());
 
     let request: randseed_game_sdk::TickRequest =
         serde_json::from_value(fixture["tickRequest"].clone()).unwrap();
@@ -256,7 +265,13 @@ impl GameServer for MockGame {
                 summary: Some(MatchSummary {
                     winner_player_id: Some("player_1".into()),
                     scores: Some(scores),
-                    duration_seconds: 5.0,
+                    duration_seconds: match state["durationKind"].as_str() {
+                        Some("negative") => -1.0,
+                        Some("nan") => f64::NAN,
+                        Some("infinite") => f64::INFINITY,
+                        Some("zero") => 0.0,
+                        _ => 5.0,
+                    },
                     custom_metrics: None,
                     extra: None,
                 }),
@@ -280,6 +295,9 @@ impl GameServer for MockGame {
         cmd: GameCommand,
         mut state: serde_json::Value,
     ) -> Result<CommandResult, SdkError> {
+        if cmd.command_type == "panic" {
+            panic!("private callback panic detail");
+        }
         if cmd.command_type == "internal_error" {
             return Err(SdkError::Internal(
                 "Sensitive backend detail: DATABASE_PASSWORD=do-not-leak".into(),
@@ -411,6 +429,26 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     });
 
     let client = reqwest::Client::new();
+
+    for (duration_kind, expected_status) in [
+        ("negative", 500),
+        ("nan", 500),
+        ("infinite", 500),
+        ("zero", 200),
+        ("finite", 200),
+    ] {
+        let response = client
+            .post(format!("{}/isGameOver", base_url))
+            .json(&json!({"state": {"tickCount": 100, "durationKind": duration_kind}}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected_status);
+        if expected_status == 500 {
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(body["error"], "Internal server error.");
+        }
+    }
 
     // 1. GET /manifest
     let resp = client
@@ -581,6 +619,27 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 500);
     let error_body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(error_body, json!({ "error": "Internal server error." }));
+
+    let panic_req = json!({
+        "command": { "type": "panic", "data": {} },
+        "state": {}
+    });
+    let resp = client
+        .post(format!("{}/onCommand", base_url))
+        .json(&panic_req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let panic_error: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(panic_error, json!({ "error": "Internal server error." }));
+
+    let resp = client
+        .get(format!("{}/health", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
     assert!(!error_body
         .to_string()
         .contains("DATABASE_PASSWORD=do-not-leak"));

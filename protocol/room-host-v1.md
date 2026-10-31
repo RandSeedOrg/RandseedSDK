@@ -41,8 +41,9 @@ to 1 MiB; oversized bodies return HTTP `413`.
 
 `title` and `version` are non-empty strings. `minPlayers` is at least one and
 `maxPlayers` is no smaller than `minPlayers`. The current room platform accepts
-at most 100 players and rates from 1 through 60 Hz. `persistentTable` is a
-boolean. `optionsSchema` may optionally declare a JSON Schema for game options.
+at most 100 players and rates from 1 through 60 Hz, including fractional
+rates. `persistentTable` is a boolean. `optionsSchema` may optionally declare
+a JSON Schema for game options.
 
 ### Match configuration
 
@@ -59,11 +60,10 @@ boolean. `optionsSchema` may optionally declare a JSON Schema for game options.
 ```
 
 `players` is a non-empty array of unique player IDs supplied by the host.
-`matchSeq` is a positive safe integer. `tickRateHz`, when present, is finite
-and between 1 and 60.
+`matchSeq` is a positive safe integer. `tickRateHz`, when present, is a finite
+number between 1 and 60; fractional rates are valid and `null` is not valid.
 `options.seed` is a finite JSON number. Other `options` entries are game-owned
 JSON configuration. `carryover` is opaque JSON and may be any JSON value.
-`tickRateHz` is optional and, when present, is between 1 and 60.
 
 ### Initialization
 
@@ -96,8 +96,9 @@ Request:
 Each input has a `playerId` and a required JSON `data` value; `timestamp` is
 optional, is a non-negative safe integer, and is measured in epoch milliseconds.
 `commands` is optional and defaults to an empty array. `tick` is a non-negative
-safe integer. `elapsedSeconds` is finite and non-negative and is derived from
-the host tick, not wall-clock time.
+safe integer. `elapsedSeconds` is finite, non-negative cumulative match time
+derived from the host tick, not wall-clock time. Do not add successive
+`elapsedSeconds` values to calculate total duration.
 
 Response:
 
@@ -106,7 +107,8 @@ Response:
 ```
 
 `state` and boolean `persist` are required. `broadcasts` is an optional JSON
-array.
+array. `persist` requests a snapshot; it does not determine whether the host
+keeps the authoritative state or journals and replays committed ticks.
 
 ### Player events
 
@@ -131,8 +133,11 @@ They return `{ "state": ..., "broadcasts": [] }`. `state` is required;
 }
 ```
 
-When `over` is true, `summary` and `nextMatchPolicy` are required. Supported
-policy modes are `auto_next_match`, `wait_for_ready`, and `close_room`.
+When `over` is true, `summary` and `nextMatchPolicy` are required. The summary
+must be an object containing a finite, non-negative `durationSeconds`. The policy must contain
+a supported `mode` and a non-negative integer `timeoutMs` (include it even
+when the timeout is zero). Supported policy modes are `auto_next_match`,
+`wait_for_ready`, and `close_room`.
 Browser-ready signaling for `wait_for_ready` is not part of this protocol yet.
 
 Trusted host commands use `POST /onCommand` with

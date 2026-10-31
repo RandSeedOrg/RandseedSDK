@@ -46,10 +46,14 @@ else()
     target_compile_options(randseed_room_host PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_executable(room_counter examples/counter/main.cpp)
+add_executable(room_counter examples/counter/main.cpp examples/counter/entry.cpp)
 target_link_libraries(room_counter PRIVATE randseed::room_host)
 
 if(BUILD_TESTING)
+    add_executable(room_counter_tests tests/counter_tests.cpp examples/counter/main.cpp)
+    target_link_libraries(room_counter_tests PRIVATE randseed::room_host)
+    add_test(NAME room_counter_regressions COMMAND room_counter_tests)
+
     add_executable(randseed_room_host_tests tests/room_host_tests.cpp)
     target_link_libraries(randseed_room_host_tests
         PRIVATE randseed::room_host httplib::httplib Threads::Threads
