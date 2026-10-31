@@ -248,13 +248,16 @@ MatchConfig parse_match_config(const Json& value) {
         config.players.push_back(std::move(player_id));
     }
 
-    const auto& options = require_object(
-        require_field(value, "options"), "options");
-    const auto& seed = require_field(options, "seed", "options");
-    if (!seed.is_number() || !std::isfinite(seed.get<double>())) {
-        throw ValidationError("options.seed must be a finite number");
+    if (value.contains("options")) {
+        const auto& options = require_object(value.at("options"), "options");
+        if (options.contains("seed")) {
+            const auto& seed = options.at("seed");
+            if (!seed.is_number() || !std::isfinite(seed.get<double>())) {
+                throw ValidationError("options.seed must be a finite number");
+            }
+        }
+        config.options = options;
     }
-    config.options = options;
     config.carryover = require_field(value, "carryover");
 
     if (value.contains("tickRateHz")) {

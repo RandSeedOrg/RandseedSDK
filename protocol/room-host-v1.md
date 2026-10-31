@@ -62,7 +62,8 @@ a JSON Schema for game options.
 `players` is a non-empty array of unique player IDs supplied by the host.
 `matchSeq` is a positive safe integer. `tickRateHz`, when present, is a finite
 number between 1 and 60; fractional rates are valid and `null` is not valid.
-`options.seed` is a finite JSON number. Other `options` entries are game-owned
+`options` may be omitted; when present it must be an object, not `null`.
+`options.seed`, when present, is a finite JSON number. Other `options` entries are game-owned
 JSON configuration. `carryover` is opaque JSON and may be any JSON value.
 
 ### Initialization

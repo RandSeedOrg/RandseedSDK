@@ -84,8 +84,12 @@ internal static class RequestValidation
             return "tickRateHz must be between 1 and 60";
         }
 
+        if (IsDefined(config.Options) && config.Options.ValueKind != JsonValueKind.Object)
+        {
+            return "options must be an object";
+        }
+
         if (IsDefined(config.Options) &&
-            config.Options.ValueKind == JsonValueKind.Object &&
             config.Options.TryGetProperty("seed", out var seed) &&
             (seed.ValueKind != JsonValueKind.Number ||
              !seed.TryGetDouble(out var seedValue) ||

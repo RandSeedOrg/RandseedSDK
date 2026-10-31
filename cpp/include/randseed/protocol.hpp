@@ -33,7 +33,7 @@ struct MatchConfig {
     std::string game_id;
     std::vector<std::string> players;
     std::uint64_t match_seq{0};
-    Json options{Json::object()};
+    Json options = Json::object();
     Json carryover{nullptr};
     std::optional<double> tick_rate_hz;
 };

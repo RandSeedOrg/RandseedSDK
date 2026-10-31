@@ -95,6 +95,18 @@ async Task VerifyHttpHostAsync()
         await VerifyPostAsync(client, "/isGameOver", "isGameOverRequest", "gameOverResponse");
         await VerifyPostAsync(client, "/onCommand", "commandRequest", "commandResponse");
 
+        foreach (var (options, expected) in new[]
+        {
+            ("", HttpStatusCode.OK),
+            (""","options":{}""", HttpStatusCode.OK),
+            (""","options":null""", HttpStatusCode.BadRequest)
+        })
+        {
+            using var response = await PostRawAsync(client, "/init",
+                """{"matchId":"m","gameId":"room-counter","players":["player-a"],"matchSeq":1,"carryover":null""" + options + "}");
+            Assert(response.StatusCode == expected, $"Unexpected status for options {options}.");
+        }
+
         foreach (var (summary, expectedStatus) in new[]
         {
             ("null", HttpStatusCode.InternalServerError),
@@ -224,7 +236,7 @@ async Task VerifyHttpHostAsync()
             client,
             "/init",
             """
-            {"matchId":"arbitrary-json","gameId":"room-counter","players":["player-a"],"matchSeq":1,"options":[null,{"nested":{"enabled":true}}],"carryover":null}
+            {"matchId":"arbitrary-json","gameId":"room-counter","players":["player-a"],"matchSeq":1,"options":{"nested":[null,{"enabled":true}]},"carryover":null}
             """))
         {
             Assert(arbitraryJson.StatusCode == HttpStatusCode.OK, "Arbitrary options/carryover JSON was rejected.");

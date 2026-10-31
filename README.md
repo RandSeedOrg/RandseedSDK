@@ -9,14 +9,15 @@ or deployment implementation.
 
 | Language | SDK location | Install and verify |
 | --- | --- | --- |
+| Node.js / TypeScript | [`node/`](./node/) | Consumer install: `npm install github:RandSeedOrg/RandseedSDK#main`; repository checks: `npm ci && npm test` |
 | Go | [`go/`](./go/) | `go get github.com/randseedorg/randseedsdk/go/roomhost@v0.1.0`; `go test ./...` |
 | Rust | [`rust/`](./rust/) | Use the path dependency and checks in the [crate README](./rust/randseed-game-sdk/README.md). |
 | C# | [`dotnet/`](./dotnet/) | `dotnet run --project dotnet/verification` |
 | C++ | [`cpp/`](./cpp/) | See the CMake build instructions in [`cpp/README.md`](./cpp/README.md). |
 
-The Node.js server SDK remains available as
-[`@randseed/server-sdk`](https://www.npmjs.com/package/@randseed/server-sdk).
-The browser SDK remains available as
+The Node.js server SDK source and other backend SDKs are maintained in this
+repository. The Node package is installed from this GitHub repository, not
+from the npm registry. The browser-only SDK remains published on npm as
 [`@randseed/game-sdk`](https://www.npmjs.com/package/@randseed/game-sdk).
 
 ## Room-host protocol
