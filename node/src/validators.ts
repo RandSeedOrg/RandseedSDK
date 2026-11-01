@@ -114,8 +114,11 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
   if (!isSafeInteger(config.matchSeq) || config.matchSeq < 1) {
     throw new Error("matchSeq must be a positive safe integer.");
   }
-  if (Object.hasOwn(config, "options") && !isRecord(config.options)) {
-    throw new Error("options must be an object.");
+  if (Object.hasOwn(config, "options")) {
+    if (!isRecord(config.options)) {
+      throw new Error("options must be an object.");
+    }
+    validateJsonValue(config.options);
   }
   if (
     isRecord(config.options) &&
