@@ -23,7 +23,7 @@ export function validateAgentGameCapabilities(value: unknown): AgentGameCapabili
   if (!Array.isArray(declaration.modes) || declaration.modes.length === 0) {
     throw new Error("Agent modes must be non-empty, unique, and supported.");
   }
-  const modes = declaration.modes.map((mode: unknown): AgentControlMode => {
+  const modes = Array.from(declaration.modes, (mode: unknown): AgentControlMode => {
     if (mode === "copilot" || mode === "autoplay" || mode === "follow") return mode;
     throw new Error("Agent modes must be non-empty, unique, and supported.");
   });
