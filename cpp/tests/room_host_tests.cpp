@@ -39,7 +39,9 @@ public:
 
     GameManifest manifest() const override {
         auto result = fixture_.at("manifest").get<GameManifest>();
-        result.result_definition = result_definition_;
+        if (result_definition_) {
+            result.result_definition = result_definition_;
+        }
         return result;
     }
 
