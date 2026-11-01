@@ -528,8 +528,7 @@ GameResultEvent parse_result_event(
         require_field(value, "definitionVersion", "GameResultEvent"),
         "GameResultEvent.definitionVersion");
     if (value.contains("occurredAt")) {
-        event.occurred_at = require_safe_integer(
-            value.at("occurredAt"), "GameResultEvent.occurredAt", true);
+            value.at("occurredAt"), "GameResultEvent.occurredAt", false);
     }
 
     const auto& participants = require_array(
