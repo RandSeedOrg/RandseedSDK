@@ -53,7 +53,7 @@ public:
         InitResult result{
             .state = expected.at("state"),
             .broadcasts = expected.value("broadcasts", Json::array()),
-            .result_units = result_units_};
+            .result_units = result_units_for("initResponse")};
         return result;
     }
 
@@ -63,7 +63,7 @@ public:
             .state = expected.at("state"),
             .broadcasts = expected.value("broadcasts", Json::array()),
             .persist = expected.at("persist").get<bool>(),
-            .result_units = result_units_};
+            .result_units = result_units_for("tickResponse")};
         return result;
     }
 
@@ -86,7 +86,7 @@ public:
             .summary = state.is_object() && state.contains("testSummary")
                 ? state.at("testSummary") : expected.at("summary"),
             .next_match_policy = expected.at("nextMatchPolicy"),
-            .result_units = result_units_};
+            .result_units = result_units_for("gameOverResponse")};
     }
 
     CommandResult on_command(const Json&, const Json&) const override {
@@ -94,7 +94,7 @@ public:
         return CommandResult{
             .state = expected.at("state"),
             .broadcasts = expected.value("broadcasts", Json::array()),
-            .result_units = result_units_};
+            .result_units = result_units_for("commandResponse")};
     }
 
     void fail_init(bool value) {
@@ -114,12 +114,24 @@ public:
     }
 
 private:
+    std::optional<std::vector<GameResultEvent>> result_units_for(
+        std::string_view response_name) const {
+        if (result_units_) {
+            return result_units_;
+        }
+        const auto& response = fixture_.at(std::string(response_name));
+        if (!response.contains("resultUnits")) {
+            return std::nullopt;
+        }
+        return response.at("resultUnits").get<std::vector<GameResultEvent>>();
+    }
+
     PlayerEventResult player_event_result() const {
         const auto& expected = fixture_.at("playerEventResponse");
         return PlayerEventResult{
             .state = expected.at("state"),
             .broadcasts = expected.value("broadcasts", Json::array()),
-            .result_units = result_units_};
+            .result_units = result_units_for("playerEventResponse")};
     }
 
     Json fixture_;
@@ -177,38 +189,51 @@ void test_fixture_serialization(const Json& fixture) {
             fixture.at("commandRequest"),
         "command request serialization differs from fixture");
 
+    const auto result_units = [](const Json& response) {
+        if (!response.contains("resultUnits")) {
+            return std::optional<std::vector<GameResultEvent>>{std::nullopt};
+        }
+        return std::optional<std::vector<GameResultEvent>>{
+            response.at("resultUnits").get<std::vector<GameResultEvent>>()};
+    };
+
     const auto& init = fixture.at("initResponse");
     require(
         Json(InitResult{
             .state = init.at("state"),
-            .broadcasts = init.at("broadcasts")}) == init,
+            .broadcasts = init.at("broadcasts"),
+            .result_units = result_units(init)}) == init,
         "init response serialization differs from fixture");
     const auto& tick = fixture.at("tickResponse");
     require(
         Json(TickResult{
             .state = tick.at("state"),
             .broadcasts = tick.at("broadcasts"),
-            .persist = tick.at("persist").get<bool>()}) == tick,
+            .persist = tick.at("persist").get<bool>(),
+            .result_units = result_units(tick)}) == tick,
         "tick response serialization differs from fixture");
     const auto& player_event = fixture.at("playerEventResponse");
     require(
         Json(PlayerEventResult{
             .state = player_event.at("state"),
-            .broadcasts = player_event.at("broadcasts")}) == player_event,
+            .broadcasts = player_event.at("broadcasts"),
+            .result_units = result_units(player_event)}) == player_event,
         "player-event response serialization differs from fixture");
     const auto& game_over = fixture.at("gameOverResponse");
     require(
         Json(GameOverResult{
             .over = game_over.at("over").get<bool>(),
             .summary = game_over.at("summary"),
-            .next_match_policy = game_over.at("nextMatchPolicy")}) ==
+            .next_match_policy = game_over.at("nextMatchPolicy"),
+            .result_units = result_units(game_over)}) ==
             game_over,
         "game-over response serialization differs from fixture");
     const auto& command = fixture.at("commandResponse");
     require(
         Json(CommandResult{
             .state = command.at("state"),
-            .broadcasts = command.at("broadcasts")}) == command,
+            .broadcasts = command.at("broadcasts"),
+            .result_units = result_units(command)}) == command,
         "command response serialization differs from fixture");
 }
 

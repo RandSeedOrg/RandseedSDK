@@ -432,10 +432,6 @@ func isJSONArray(data []byte) bool {
 	return len(trimmed) > 0 && trimmed[0] == '[' && json.Valid(trimmed)
 }
 
-func isJSONNull(data []byte) bool {
-	return bytes.Equal(bytes.TrimSpace(data), []byte("null"))
-}
-
 func validOptionsSchema(data []byte) bool {
 	if !json.Valid(data) {
 		return false
