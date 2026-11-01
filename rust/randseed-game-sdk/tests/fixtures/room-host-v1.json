@@ -6,7 +6,20 @@
     "minPlayers": 1,
     "maxPlayers": 4,
     "tickRateHz": 2.5,
-    "persistentTable": false
+    "persistentTable": false,
+    "resultDefinition": {
+      "version": "counter-results-v1",
+      "unitTypes": ["round", "match"],
+      "metrics": [
+        {
+          "id": "roundsPlayed",
+          "scope": "participant",
+          "unit": "rounds",
+          "unitTypes": ["round"],
+          "aggregation": "sum"
+        }
+      ]
+    }
   },
   "config": {
     "matchId": "match-1",
@@ -19,7 +32,22 @@
   },
   "initResponse": {
     "state": { "count": 17, "players": ["pairwise-a", "pairwise-b"] },
-    "broadcasts": [{ "type": "started" }]
+    "broadcasts": [{ "type": "started" }],
+    "resultUnits": [{
+      "schemaVersion": 1,
+      "eventId": "match-1-round-1",
+      "matchId": "match-1",
+      "unitId": "round-1",
+      "unitType": "round",
+      "rulesVersion": "rules-1",
+      "definitionVersion": "counter-results-v1",
+      "participants": [{
+        "playerId": "pairwise-a",
+        "outcome": "win",
+        "rank": 1,
+        "metrics": { "roundsPlayed": 1.0 }
+      }]
+    }]
   },
   "tickRequest": {
     "ctx": {
@@ -33,7 +61,22 @@
   "tickResponse": {
     "state": { "count": 18 },
     "broadcasts": [{ "type": "counter.changed", "count": 18 }],
-    "persist": true
+    "persist": true,
+    "resultUnits": [{
+      "schemaVersion": 1,
+      "eventId": "match-1-round-1",
+      "matchId": "match-1",
+      "unitId": "round-1",
+      "unitType": "round",
+      "rulesVersion": "rules-1",
+      "definitionVersion": "counter-results-v1",
+      "participants": [{
+        "playerId": "pairwise-a",
+        "outcome": "win",
+        "rank": 1,
+        "metrics": { "roundsPlayed": 1.0 }
+      }]
+    }]
   },
   "playerEventRequest": {
     "playerId": "pairwise-b",
@@ -41,13 +84,39 @@
   },
   "playerEventResponse": {
     "state": { "count": 18, "players": ["pairwise-a", "pairwise-b"] },
-    "broadcasts": [{ "type": "player_joined", "playerId": "pairwise-b" }]
+    "broadcasts": [{ "type": "player_joined", "playerId": "pairwise-b" }],
+    "resultUnits": [{
+      "schemaVersion": 1,
+      "eventId": "match-1-player-join-round",
+      "matchId": "match-1",
+      "unitId": "round-from-player-event",
+      "unitType": "round",
+      "rulesVersion": "rules-1",
+      "definitionVersion": "counter-results-v1",
+      "participants": [{
+        "playerId": "pairwise-b",
+        "metrics": { "roundsPlayed": 1.0 }
+      }]
+    }]
   },
   "isGameOverRequest": { "state": { "count": 20 } },
   "gameOverResponse": {
     "over": true,
     "summary": { "durationSeconds": 0.2 },
-    "nextMatchPolicy": { "mode": "auto_next_match", "timeoutMs": 0, "carryover": 17 }
+    "nextMatchPolicy": { "mode": "auto_next_match", "timeoutMs": 0, "carryover": 17 },
+    "resultUnits": [{
+      "schemaVersion": 1,
+      "eventId": "match-1-final",
+      "matchId": "match-1",
+      "unitId": "match-1",
+      "unitType": "match",
+      "rulesVersion": "rules-1",
+      "definitionVersion": "counter-results-v1",
+      "participants": [{
+        "playerId": "pairwise-a",
+        "metrics": {}
+      }]
+    }]
   },
   "commandRequest": {
     "command": { "type": "reset", "data": { "count": 0 }, "issuer": "host" },
@@ -55,7 +124,20 @@
   },
   "commandResponse": {
     "state": { "count": 0 },
-    "broadcasts": [{ "type": "counter.reset" }]
+    "broadcasts": [{ "type": "counter.reset" }],
+    "resultUnits": [{
+      "schemaVersion": 1,
+      "eventId": "match-1-reset-round",
+      "matchId": "match-1",
+      "unitId": "round-after-reset",
+      "unitType": "round",
+      "rulesVersion": "rules-1",
+      "definitionVersion": "counter-results-v1",
+      "participants": [{
+        "playerId": "pairwise-a",
+        "metrics": { "roundsPlayed": 1.0 }
+      }]
+    }]
   },
   "prngVectors": [
     { "seed": 0, "u32": [1144304738, 1416247, 958946056, 627933444, 2007157716] },

@@ -1,0 +1,97 @@
+{
+  "definition": {
+    "version": "results-v1",
+    "unitTypes": ["round", "match"],
+    "metrics": [
+      {
+        "id": "eligibleHands",
+        "scope": "participant",
+        "unit": "hands",
+        "unitTypes": ["round"],
+        "aggregation": "sum"
+      },
+      {
+        "id": "handsWon",
+        "scope": "participant",
+        "unit": "hands",
+        "unitTypes": ["round"],
+        "aggregation": "sum"
+      },
+      {
+        "id": "winRate",
+        "scope": "participant",
+        "unit": "ratio",
+        "unitTypes": ["round"],
+        "aggregation": {
+          "type": "ratio",
+          "numeratorMetricId": "handsWon",
+          "denominatorMetricId": "eligibleHands"
+        }
+      },
+      {
+        "id": "fastestLapMs",
+        "scope": "participant",
+        "unit": "milliseconds",
+        "unitTypes": ["match"],
+        "aggregation": "min"
+      },
+      {
+        "id": "teamPoints",
+        "scope": "team",
+        "unit": "points",
+        "unitTypes": ["round"],
+        "aggregation": "sum"
+      }
+    ]
+  },
+  "event": {
+    "schemaVersion": 1,
+    "eventId": "result-event-001",
+    "matchId": "match-001",
+    "unitId": "round-001",
+    "unitType": "round",
+    "rulesVersion": "rules-3",
+    "definitionVersion": "results-v1",
+    "occurredAt": 1793500000000,
+    "participants": [
+      {
+        "playerId": "player-a",
+        "teamId": "team-red",
+        "outcome": "win",
+        "rank": 1,
+        "metrics": {
+          "eligibleHands": 1.0,
+          "handsWon": 1.0
+        }
+      },
+      {
+        "playerId": "player-b",
+        "teamId": "team-blue",
+        "outcome": "loss",
+        "rank": 2,
+        "metrics": {
+          "eligibleHands": 1.0,
+          "handsWon": 0.0
+        }
+      }
+    ],
+    "teams": [
+      {
+        "teamId": "team-red",
+        "outcome": "win",
+        "rank": 1,
+        "metrics": {
+          "teamPoints": 3.0
+        }
+      },
+      {
+        "teamId": "team-blue",
+        "outcome": "loss",
+        "rank": 2,
+        "metrics": {
+          "teamPoints": 1.0
+        }
+      }
+    ]
+  }
+}

@@ -47,6 +47,61 @@ createGameServer(game, Number(process.env.PORT ?? 8080));
 requests and game responses, limits request bodies to 1 MiB, and returns
 sanitized errors for failed game callbacks.
 
+## Result Units
+
+Declare versioned result-unit types and metric aggregations in the manifest,
+then return completed units from any lifecycle transition. A match can emit
+multiple round, lap, stage, or match units; this contract does not require one
+winner or a generic score. See the [Result Unit protocol](../protocol/room-host-v1.md#result-units-and-metrics)
+and [shared event fixture](../protocol/fixtures/game-result-event-v1.json).
+
+```ts
+const resultDefinition = {
+  version: "results-v1",
+  unitTypes: ["round"],
+  metrics: [
+    { id: "roundsPlayed", scope: "participant", unit: "rounds", unitTypes: ["round"], aggregation: "sum" },
+    { id: "roundsWon", scope: "participant", unit: "rounds", unitTypes: ["round"], aggregation: "sum" },
+    {
+      id: "winRate",
+      scope: "participant",
+      unit: "ratio",
+      unitTypes: ["round"],
+      aggregation: { type: "ratio", numeratorMetricId: "roundsWon", denominatorMetricId: "roundsPlayed" },
+    },
+  ],
+};
+
+const game = {
+  manifest: () => ({
+    title: "My Game", version: "1.0.0", minPlayers: 1, maxPlayers: 4,
+    tickRateHz: 20, persistentTable: false, resultDefinition,
+  }),
+  tick: (_ctx, state) => ({
+    state,
+    persist: true,
+    resultUnits: [{
+      schemaVersion: 1,
+      eventId: "match-42-round-3",
+      matchId: "match-42",
+      unitId: "round-3",
+      unitType: "round",
+      rulesVersion: "rules-v1",
+      definitionVersion: "results-v1",
+      participants: [{ playerId: "player-a", outcome: "win", metrics: { roundsPlayed: 1, roundsWon: 1 } }],
+    }],
+  }),
+};
+```
+
+`validateGameResultDefinition`, `validateGameResultEvent`, and
+`validateGameResultUnits` are exported for direct validation. Supply a
+definition to validate declared metric IDs and scopes. The HTTP host checks
+shape and size; the trusted room host must additionally validate the published
+definition version, active match, authenticated roster, durable delivery, and
+Archive idempotency. Use stable event IDs across retries. The SDK does not
+persist or deliver results and does not provide statistics queries.
+
 For TypeScript, import `type GameServer` from the same package and declare
 `const game: GameServer<State> = ...`. Set `"type": "module"` in a JavaScript
 project's `package.json`, or use an `.mjs` entry point.

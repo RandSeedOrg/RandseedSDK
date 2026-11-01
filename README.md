@@ -31,7 +31,10 @@ All server SDKs implement the same HTTP/JSON lifecycle contract:
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same
 [wire fixture](./protocol/fixtures/room-host-v1.json), including deterministic
-Mulberry32 test vectors.
+Mulberry32 test vectors. Result Unit declarations and events are also validated
+against the shared [Result Unit fixture](./protocol/fixtures/game-result-event-v1.json).
+All server languages expose optional `resultDefinition` and `resultUnits`
+fields; emitting an event does not itself persist or archive it.
 
 The room host owns scheduling, authoritative persistence, player identity,
 and recovery. Game code must calculate from the supplied state and context;

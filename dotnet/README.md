@@ -43,6 +43,23 @@ await app.RunAsync();
 validates manifests, match configuration, ticks, lifecycle events, commands,
 and callback results before returning protocol responses.
 
+## Result Units
+
+Declare a versioned `GameResultDefinition` on `GameManifest` and return
+`GameResultEvent` objects in `ResultUnits` from any lifecycle callback. A match
+may contain multiple round, lap, stage, or match units; this contract does not
+require a unique winner or generic score. The event, metric, correction, and
+limit contract is language-independent; see the [Result Unit protocol](../protocol/room-host-v1.md#result-units-and-metrics)
+and [shared fixture](../protocol/fixtures/game-result-event-v1.json).
+
+The .NET host validates declaration shape and response event limits. It does
+not authenticate the source, persist an outbox, deliver results, check the
+active room roster, or authorize queries; those remain trusted platform-host
+responsibilities. Use stable event IDs across retries and append-only
+correction events. `ResultUnitValidator.ValidateDefinition`,
+`ValidateEvent`, and `ValidateEvents` are also available for game-side
+validation against a declared result definition.
+
 Use the supplied state and tick context as the authoritative inputs to game
 callbacks. Avoid process-global match state, wall-clock simulation, or
 unrecorded external inputs. `Mulberry32` implements the protocol's deterministic

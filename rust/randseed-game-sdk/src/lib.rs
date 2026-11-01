@@ -28,7 +28,11 @@ pub use replay::{
 };
 pub use server::{create_game_router, run_game_server, GameServer};
 pub use types::{
-    CommandRequest, CommandResult, GameCommand, GameManifest, GameResult, HealthResponse,
-    InitResult, IsGameOverRequest, MatchConfig, MatchOptions, MatchSummary, NextMatchPolicy,
-    PlayerEventRequest, PlayerEventResult, TickContext, TickInput, TickRequest, TickResult,
+    validate_game_result_units, CommandRequest, CommandResult, GameCommand, GameManifest,
+    GameMetricAggregation, GameMetricDefinition, GameResult, GameResultCorrection,
+    GameResultCorrectionAction, GameResultDefinition, GameResultEvent, GameResultParticipant,
+    GameResultTeam, HealthResponse, InitResult, IsGameOverRequest, MatchConfig, MatchOptions,
+    MatchSummary, NextMatchPolicy, PlayerEventRequest, PlayerEventResult, RatioMetricAggregation,
+    ResultMetricScope, ResultOutcome, SimpleMetricAggregation, TickContext, TickInput, TickRequest,
+    TickResult,
 };

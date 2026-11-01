@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { GameCommand, GameServer, JsonValue, MatchConfig, TickContext } from "./types.js";
 import { validateAgentGameCapabilities } from "./agent-capabilities.js";
+import { validateGameResultUnits } from "./result-units.js";
 import {
   isRecord,
   validateGameCommand,
@@ -167,6 +168,7 @@ function validateStateResult(value: unknown): void {
     }
     validateJsonValue(value.broadcasts);
   }
+  validateGameResultUnits(value.resultUnits);
 }
 
 function validateTickResult(value: unknown): asserts value is {
@@ -189,6 +191,7 @@ function validateGameResult(value: unknown): asserts value is {
     throw new Error("GameResult.over must be a boolean.");
   }
   validateJsonValue(value);
+  validateGameResultUnits(value.resultUnits);
 
   if (Object.hasOwn(value, "summary")) {
     if (

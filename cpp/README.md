@@ -25,7 +25,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 The contract test reads the shared fixture at
-`../protocol/fixtures/room-host-v1.json`.
+`../protocol/fixtures/room-host-v1.json`. Result Unit tests also read
+`../protocol/fixtures/game-result-event-v1.json`.
 
 ## Run the counter host
 
@@ -79,6 +80,60 @@ match state, operating-system randomness, or unrecorded network calls.
 Callbacks may be invoked concurrently, so game implementations should be
 thread-safe and should not mutate shared authoritative state. The `Game`
 instance is non-owning and must outlive its `RoomHost`.
+
+## Result Units
+
+Declare versioned result-unit types and metric definitions in
+`GameManifest::result_definition`. Each lifecycle result type has an optional
+`result_units` vector. The host validates emitted events against the published
+definition, including unit type, metric scope, and metric applicability.
+Result events support participant and team outcomes, ranks, direct metrics,
+and append-only `replace` or `retract` corrections.
+
+```cpp
+randseed::GameResultDefinition definition{
+    .version = "results-v1",
+    .unit_types = {"round"},
+    .metrics = {{
+        .id = "handsWon",
+        .scope = randseed::ResultMetricScope::Participant,
+        .unit = "hands",
+        .unit_types = {"round"},
+        .aggregation = {.type = "sum", .ratio = std::nullopt}}}};
+
+randseed::GameManifest manifest{
+    .title = "My game",
+    .version = "1.0.0",
+    .min_players = 1,
+    .max_players = 4,
+    .tick_rate_hz = 5.0,
+    .persistent_table = false,
+    .options_schema = std::nullopt,
+    .result_definition = definition};
+
+randseed::GameResultEvent event{
+    .schema_version = 1,
+    .event_id = "result-event-001",
+    .match_id = "match-001",
+    .unit_id = "round-001",
+    .unit_type = "round",
+    .rules_version = "rules-3",
+    .definition_version = definition.version,
+    .occurred_at = std::nullopt,
+    .participants = {{
+        .player_id = "player-a",
+        .team_id = std::nullopt,
+        .outcome = randseed::ResultOutcome::Win,
+        .rank = 1,
+        .metrics = {{"handsWon", 1.0}}},
+    .teams = std::nullopt,
+    .correction = std::nullopt};
+
+randseed::InitResult result{
+    .state = randseed::Json::object(),
+    .broadcasts = std::nullopt,
+    .result_units = std::vector<randseed::GameResultEvent>{event}};
+```
 
 `randseed::Mulberry32` accepts a numeric seed, applies JavaScript-compatible
 `ToInt32` conversion, and exposes `next_u32()` and `next_float()`. It is a

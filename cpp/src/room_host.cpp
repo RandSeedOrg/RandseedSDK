@@ -27,6 +27,18 @@ void send_error(Response& response, int status, std::string_view message) {
     send_json(response, Json{{"error", message}}, status);
 }
 
+template <typename Result>
+Json serialize_transition_result(const Game& game, const Result& result) {
+    const GameManifest manifest = game.manifest();
+    const GameResultDefinition* definition = nullptr;
+    if (manifest.result_definition) {
+        validate_game_result_definition(*manifest.result_definition);
+        definition = &*manifest.result_definition;
+    }
+    validate_game_result_units(result.result_units, definition);
+    return Json(result);
+}
+
 template <typename Handler>
 void handle_game_response(Response& response, Handler&& handler) noexcept {
     try {
@@ -134,37 +146,45 @@ struct RoomHost::Impl {
             "/init",
             parse_match_config,
             [this](const MatchConfig& config) {
-                return game.init(config);
+                return serialize_transition_result(game, game.init(config));
             });
         add_post<TickRequest>(
             "/tick",
             parse_tick_request,
             [this](const TickRequest& request) {
-                return game.tick(request.ctx, request.state);
+                return serialize_transition_result(
+                    game, game.tick(request.ctx, request.state));
             });
         add_post<PlayerEventRequest>(
             "/onPlayerJoin",
             parse_player_event_request,
             [this](const PlayerEventRequest& request) {
-                return game.on_player_join(request.player_id, request.state);
+                return serialize_transition_result(
+                    game,
+                    game.on_player_join(request.player_id, request.state));
             });
         add_post<PlayerEventRequest>(
             "/onPlayerLeave",
             parse_player_event_request,
             [this](const PlayerEventRequest& request) {
-                return game.on_player_leave(request.player_id, request.state);
+                return serialize_transition_result(
+                    game,
+                    game.on_player_leave(request.player_id, request.state));
             });
         add_post<IsGameOverRequest>(
             "/isGameOver",
             parse_is_game_over_request,
             [this](const IsGameOverRequest& request) {
-                return game.is_game_over(request.state);
+                return serialize_transition_result(
+                    game, game.is_game_over(request.state));
             });
         add_post<CommandRequest>(
             "/onCommand",
             parse_command_request,
             [this](const CommandRequest& request) {
-                return game.on_command(request.command, request.state);
+                return serialize_transition_result(
+                    game,
+                    game.on_command(request.command, request.state));
             });
     }
 

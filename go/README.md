@@ -41,6 +41,20 @@ do not use wall-clock time, process-global match state, or unrecorded external
 inputs. Request bodies are limited to 1 MiB, and protocol sequence/tick
 numbers use safe-integer bounds.
 
+## Result Units
+
+Declare `GameResultDefinition` in `GameManifest`, then return `ResultUnits`
+from init, tick, player lifecycle, command, or game-over callbacks. A match may
+emit multiple rounds, laps, stages, or a match result without requiring one
+winner or a generic score. Use `ValidateGameResultUnits` for a transition and
+`GameResultEvent.Validate` with the published definition to validate declared
+metric IDs. The shared event and definition are in
+[`game-result-event-v1.json`](../protocol/fixtures/game-result-event-v1.json).
+
+The Go host checks event shape and limits, not the room's authenticated match,
+roster, durable delivery, or archive idempotency. Keep event IDs stable across
+retries and use append-only correction events.
+
 `roomhost.NewMulberry32` provides the protocol's deterministic simulation
 generator. It is not cryptographic and is not GameVRF. See the
 [room-host v1 protocol](../protocol/room-host-v1.md).

@@ -1,4 +1,5 @@
 import type { GameCommand, GameManifest, JsonValue, MatchConfig, TickContext } from "./types.js";
+import { validateGameResultDefinition } from "./result-units.js";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -88,6 +89,9 @@ export function validateGameManifest(manifest: unknown): asserts manifest is Gam
       throw new Error("optionsSchema must be a JSON Schema object or boolean.");
     }
     validateJsonValue(schema);
+  }
+  if (Object.hasOwn(manifest, "resultDefinition")) {
+    validateGameResultDefinition(manifest.resultDefinition);
   }
 }
 

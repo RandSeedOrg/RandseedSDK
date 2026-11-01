@@ -35,7 +35,38 @@ to 1 MiB; oversized bodies return HTTP `413`.
   "minPlayers": 2,
   "maxPlayers": 4,
   "tickRateHz": 5,
-  "persistentTable": false
+  "persistentTable": false,
+  "resultDefinition": {
+    "version": "results-v1",
+    "unitTypes": ["round", "match"],
+    "metrics": [
+      {
+        "id": "handsPlayed",
+        "scope": "participant",
+        "unit": "hands",
+        "unitTypes": ["round"],
+        "aggregation": "sum"
+      },
+      {
+        "id": "handsWon",
+        "scope": "participant",
+        "unit": "hands",
+        "unitTypes": ["round"],
+        "aggregation": "sum"
+      },
+      {
+        "id": "winRate",
+        "scope": "participant",
+        "unit": "ratio",
+        "unitTypes": ["round"],
+        "aggregation": {
+          "type": "ratio",
+          "numeratorMetricId": "handsWon",
+          "denominatorMetricId": "handsPlayed"
+        }
+      }
+    ]
+  }
 }
 ```
 
@@ -43,7 +74,9 @@ to 1 MiB; oversized bodies return HTTP `413`.
 `maxPlayers` is no smaller than `minPlayers`. The current room platform accepts
 at most 100 players and rates from 1 through 60 Hz, including fractional
 rates. `persistentTable` is a boolean. `optionsSchema` may optionally declare
-a JSON Schema for game options.
+a JSON Schema for game options. `resultDefinition` is optional and declares
+the result-unit types and metric aggregation contract described below. Keep its
+version stable only while its meaning is unchanged.
 
 ### Match configuration
 
@@ -73,10 +106,30 @@ Request: `MatchConfig`.
 Response:
 
 ```json
-{ "state": { "count": 0 }, "broadcasts": [] }
+{
+  "state": { "count": 0 },
+  "broadcasts": [],
+  "resultUnits": [{
+    "schemaVersion": 1,
+    "eventId": "match-1-round-1-result",
+    "matchId": "match-1",
+    "unitId": "round-1",
+    "unitType": "round",
+    "rulesVersion": "rules-v1",
+    "definitionVersion": "results-v1",
+    "participants": [{
+      "playerId": "pairwise-a",
+      "outcome": "win",
+      "rank": 1,
+      "metrics": { "handsPlayed": 1, "handsWon": 1 }
+    }]
+  }]
+}
 ```
 
-The `state` property is required. `broadcasts` is an optional JSON array.
+The `state` property is required. `broadcasts` and `resultUnits` are optional.
+Any transition may emit zero or more completed units: `/init`, `/tick`,
+`/onPlayerJoin`, `/onPlayerLeave`, `/isGameOver`, and `/onCommand`.
 
 ### Tick
 
@@ -107,9 +160,9 @@ Response:
 { "state": { "count": 1 }, "broadcasts": [], "persist": false }
 ```
 
-`state` and boolean `persist` are required. `broadcasts` is an optional JSON
-array. `persist` requests a snapshot; it does not determine whether the host
-keeps the authoritative state or journals and replays committed ticks.
+`state` and boolean `persist` are required. `broadcasts` and `resultUnits` are
+optional arrays. `persist` requests a snapshot; it does not determine whether
+the host keeps the authoritative state or journals and replays committed ticks.
 
 ### Player events
 
@@ -120,7 +173,7 @@ keeps the authoritative state or journals and replays committed ticks.
 ```
 
 They return `{ "state": ..., "broadcasts": [] }`. `state` is required;
-`broadcasts` is optional.
+`broadcasts` and `resultUnits` are optional.
 
 ### Game over and trusted commands
 
@@ -130,7 +183,8 @@ They return `{ "state": ..., "broadcasts": [] }`. `state` is required;
 {
   "over": true,
   "summary": { "durationSeconds": 0.2 },
-  "nextMatchPolicy": { "mode": "close_room", "timeoutMs": 0 }
+  "nextMatchPolicy": { "mode": "close_room", "timeoutMs": 0 },
+  "resultUnits": []
 }
 ```
 
@@ -143,7 +197,82 @@ Browser-ready signaling for `wait_for_ready` is not part of this protocol yet.
 
 Trusted host commands use `POST /onCommand` with
 `{ "command": { "type": "reset", "data": {} }, "state": ... }` and return
-`{ "state": ..., "broadcasts": [] }`. This endpoint is not a player input API.
+`{ "state": ..., "broadcasts": [], "resultUnits": [] }`. This endpoint is not
+a player input API.
+
+## Result Units and metrics
+
+A Result Unit is a game-defined settlement boundary within a match: a round,
+hand, lap, stage, or the complete match. One match can emit multiple units, and
+the contract does not require one winner, a numeric score, or even an individual
+outcome. Games may report participant results, team results, or both.
+
+`resultDefinition` has a version, unique `unitTypes`, and up to 128 metric
+declarations. Each metric specifies a stable `id`, `scope` (`participant` or
+`team`), semantic `unit`, applicable unit types, and an aggregation:
+`sum`, `min`, `max`, or a derived ratio. A ratio references two `sum` metrics
+with the same scope and applicable unit types. Submit only direct metrics;
+ratios are derived from cumulative numerator and denominator totals, not from
+an average of per-room or per-match ratios. A zero denominator has no numeric
+ratio result.
+
+The complete cross-language event example is in
+[`game-result-event-v1.json`](./fixtures/game-result-event-v1.json):
+
+```json
+{
+  "schemaVersion": 1,
+  "eventId": "match-1-round-1-result",
+  "matchId": "match-1",
+  "unitId": "round-1",
+  "unitType": "round",
+  "rulesVersion": "rules-v1",
+  "definitionVersion": "results-v1",
+  "participants": [{
+    "playerId": "pairwise-a",
+    "outcome": "win",
+    "rank": 1,
+    "metrics": { "handsPlayed": 1, "handsWon": 1 }
+  }],
+  "teams": [{
+    "teamId": "team-red",
+    "outcome": "win",
+    "rank": 1,
+    "metrics": {}
+  }]
+}
+```
+
+`participants` is required; `teams` is optional. Participant/team outcomes are
+optional `win`, `loss`, `draw`, or `push`; ranks are optional positive
+one-based integers and equal ranks represent a tie. Use stable IDs and exact
+metric names. The trusted room host binds `gameId`, room, environment, source,
+match, and roster identity; never add those identities to the event or accept
+them from a client. `matchId` must match the host's active match, and each
+participant must belong to its authenticated roster. `occurredAt`, when
+present, is a non-negative safe-integer Unix millisecond timestamp obtained
+from deterministic game context, never a wall clock.
+
+An event ID is stable across retries of the same logical event. A correction
+is a new event with a new ID and
+`correction: { "action": "replace" | "retract", "supersedesEventId": "..." }`.
+Replacement carries the full corrected event; retraction carries empty
+`participants` and `teams`. The archive, not the SDK, verifies that the target
+is the currently effective event for the same match and unit. Corrections are
+append-only; a later event must not overwrite earlier history.
+
+Limits: 256 KiB serialized UTF-8 per event, 1000 participants, 256 teams, 128
+metrics per participant/team and per definition, 128 Unicode code points per
+identifier/version, and at most 32 events in one lifecycle transition. A host
+checkpoint or HTTP request limit may impose a lower effective payload size.
+Metric values must be finite JSON numbers; financial amounts are not metrics
+and must use the separate integer-minor-unit payment and ledger receipt
+contract.
+
+SDK validators can check event shape and declarations. Only the trusted host
+can validate published definition versions, roster membership, event identity,
+delivery, persistence, deduplication, and authorization. A result event in an
+SDK response does not itself prove that it has been committed or archived.
 
 ## Determinism
 
@@ -162,5 +291,7 @@ test vectors. This PRNG is deterministic, not cryptographic, and is not GameVRF.
 ## Shared compatibility fixture
 
 The fixture at [`fixtures/room-host-v1.json`](./fixtures/room-host-v1.json)
-contains requests, expected responses, and PRNG vectors. SDK changes must keep
-all implementations compatible with this fixture.
+contains requests, expected responses, and PRNG vectors.
+[`fixtures/game-result-event-v1.json`](./fixtures/game-result-event-v1.json)
+contains a cross-language result definition and event. SDK changes must keep
+all implementations compatible with both fixtures.
