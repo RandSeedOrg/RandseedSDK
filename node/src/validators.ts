@@ -114,7 +114,8 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
   if (!isSafeInteger(config.matchSeq) || config.matchSeq < 1) {
     throw new Error("matchSeq must be a positive safe integer.");
   }
-  if (Object.hasOwn(config, "options") && !isRecord(config.options)) {
+  const hasOptions = Object.hasOwn(config, "options");
+  if (hasOptions && !isRecord(config.options)) {
     throw new Error("options must be an object.");
   }
   if (
@@ -123,6 +124,9 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
     (typeof config.options.seed !== "number" || !Number.isFinite(config.options.seed))
   ) {
     throw new Error("options.seed must be a finite number.");
+  }
+  if (hasOptions) {
+    validateJsonValue(config.options);
   }
   if (Object.hasOwn(config, "tickRateHz") && !isFiniteRate(config.tickRateHz)) {
     throw new Error("tickRateHz must be a finite number between 1 and 60.");

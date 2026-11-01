@@ -64,7 +64,10 @@ See the [protocol contract](../protocol/room-host-v1.md) and shared
 wire format. The SDK does not provide payment APIs or a GameVRF client.
 
 The Tier B helpers require storage of `match_config_json` and `commands_json`
-alongside the replay row and its input rows. The existing GameArchive Tier B
+alongside the replay row, plus a zero-based `input_index` on every input row.
+Persist the index from `splitReplayForTierB` and return all indexed rows to
+`assembleReplayFromTierB`; it preserves the original order of inputs sharing a
+tick and rejects missing or duplicate indexes. The existing GameArchive Tier B
 schema does not yet store these fields; do not write these helper rows to that
 schema or assume they can be reconstructed from older archives. Missing fields
 are rejected rather than silently dropping data. Replay execution covers ticks

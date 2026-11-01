@@ -292,6 +292,33 @@ describe("Node.js Server SDK", () => {
       }
     });
 
+    test("match options must contain only JSON-serializable values", () => {
+      const cyclicOptions = {};
+      cyclicOptions.self = cyclicOptions;
+      const config = {
+        matchId: "m1",
+        gameId: "test-card-game",
+        players: ["p1"],
+        matchSeq: 1,
+      };
+      for (const options of [
+        { nested: Infinity },
+        { nested: undefined },
+        cyclicOptions,
+      ]) {
+        assert.throws(() => validateMatchConfig({ ...config, options }));
+      }
+    });
+
+    test("POST /init rejects non-finite values in options", async () => {
+      const response = await fetch(`${baseUrl}/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: '{"matchId":"m1","gameId":"test-card-game","players":["p1"],"matchSeq":1,"options":{"limit":1e400}}',
+      });
+      assert.equal(response.status, 400);
+    });
+
     test("request bodies larger than 1 MiB return 413", async () => {
       const body = JSON.stringify({ payload: "x".repeat(1024 * 1024) });
       const response = await fetch(`${baseUrl}/init`, {
@@ -529,6 +556,19 @@ describe("Node.js Server SDK", () => {
       assert.throws(() => validateReplayDataV2(invalidReplay), /inputs must be ordered by non-decreasing tick/);
     });
 
+    test("ReplayDataV2 rejects values that JSON persistence would change", () => {
+      const nonFiniteInput = {
+        ...sampleReplay,
+        inputs: [{ tick: 0, playerId: "p1", data: { score: Infinity } }],
+      };
+      const undefinedStateProperty = {
+        ...sampleReplay,
+        initState: { score: 0, discarded: undefined },
+      };
+      assert.throws(() => validateReplayDataV2(nonFiniteInput), /valid JSON/);
+      assert.throws(() => validateReplayDataV2(undefinedStateProperty), /valid JSON/);
+    });
+
     test("selects Tier A, Tier B, and Tier C based on compressed size", () => {
       // Small matches fit in Tier A.
       const tierA = evaluateReplayStorageTier(sampleReplay);
@@ -549,12 +589,31 @@ describe("Node.js Server SDK", () => {
       const { replayRow, inputRows } = splitReplayForTierB(sampleReplay);
       assert.equal(replayRow.match_id, "m_replay_1");
       assert.equal(inputRows.length, 3);
+      assert.deepEqual(inputRows.map(row => row.input_index), [0, 1, 2]);
 
       const assembled = assembleReplayFromTierB(replayRow, inputRows);
       validateReplayDataV2(assembled);
       assert.deepEqual(assembled, sampleReplay);
       assert.throws(() => assembleReplayFromTierB({ ...replayRow, commands_json: undefined }, inputRows), /missing match configuration or commands/);
       assert.throws(() => assembleReplayFromTierB(replayRow, [{ ...inputRows[0], match_id: "other" }]), /different match/);
+    });
+
+    test("Tier B reconstruction preserves input order for same-tick rows", () => {
+      const replay = {
+        ...sampleReplay,
+        inputs: [
+          { tick: 10, playerId: "p1", data: { action: "first" } },
+          { tick: 10, playerId: "p2", data: { action: "second" } },
+          { tick: 10, playerId: "p1", data: { action: "third" } },
+        ],
+      };
+      const { replayRow, inputRows } = splitReplayForTierB(replay);
+      const assembled = assembleReplayFromTierB(replayRow, [...inputRows].reverse());
+      assert.deepEqual(assembled.inputs, replay.inputs);
+      assert.throws(
+        () => assembleReplayFromTierB(replayRow, inputRows.map(({ input_index, ...row }) => row)),
+        /input_index/,
+      );
     });
 
     test("replays commands after the final input and in command-only matches", async () => {

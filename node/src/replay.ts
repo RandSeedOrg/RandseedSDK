@@ -2,7 +2,7 @@
 
 import { gzipSync } from "node:zlib";
 import type { MatchConfig, MatchSummary, TickContext, TickResult } from "./types.js";
-import { validateMatchConfig } from "./validators.js";
+import { validateJsonValue, validateMatchConfig } from "./validators.js";
 
 /** A player input recorded in a replay. */
 export interface ReplayInputItem {
@@ -65,9 +65,10 @@ export interface ReplayStorageTierEvaluation {
 
 /** Validates the replay shape and non-decreasing tick order. */
 export function validateReplayDataV2(replay: unknown): asserts replay is ReplayDataV2 {
-  if (!replay || typeof replay !== "object") {
+  if (!replay || typeof replay !== "object" || Array.isArray(replay)) {
     throw new Error("ReplayDataV2 must be an object.");
   }
+  validateJsonValue(replay);
   const r = replay as Record<string, unknown>;
   if (r.version !== 2) {
     throw new Error(`Replay version must be 2; received ${String(r.version)}.`);
@@ -179,7 +180,7 @@ export function splitReplayForTierB(replay: ReplayDataV2) {
     created_at: replay.createdAt,
   };
 
-  const inputRows = replay.inputs.map(input => {
+  const inputRows = replay.inputs.map((input, input_index) => {
     const payload: { data: unknown; timestamp?: number } = { data: input.data };
     if (input.timestamp !== undefined) {
       payload.timestamp = input.timestamp;
@@ -187,6 +188,7 @@ export function splitReplayForTierB(replay: ReplayDataV2) {
     return {
       match_id: replay.matchId,
       tick: input.tick,
+      input_index,
       player_id: input.playerId,
       input_json: JSON.stringify(payload),
     };
@@ -210,6 +212,7 @@ export function assembleReplayFromTierB(
   inputRows: Array<{
     match_id: string;
     tick: number;
+    input_index: number;
     player_id: string;
     input_json: string;
   }>
@@ -221,7 +224,11 @@ export function assembleReplayFromTierB(
   if (typeof replayRow.match_config_json !== "string" || typeof replayRow.commands_json !== "string") {
     throw new Error("Tier B replay is missing match configuration or commands.");
   }
-  const inputs: Array<ReplayInputItem> = inputRows.map(r => {
+  const orderedRows = [...inputRows].sort((a, b) => a.tick - b.tick || a.input_index - b.input_index);
+  const inputs: Array<ReplayInputItem> = orderedRows.map((r, index) => {
+    if (!Number.isSafeInteger(r.input_index) || r.input_index !== index) {
+      throw new Error("Tier B inputs must include each input_index exactly once.");
+    }
     if (r.match_id !== replayRow.match_id) {
       throw new Error("Tier B input belongs to a different match.");
     }
@@ -236,8 +243,6 @@ export function assembleReplayFromTierB(
     }
     return item;
   });
-
-  inputs.sort((a, b) => a.tick - b.tick);
 
   const replay: ReplayDataV2 = {
     version: 2,

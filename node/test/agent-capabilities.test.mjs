@@ -16,6 +16,8 @@ test("Agent capabilities validate protocols, modes, frequency and background sup
     { observationProtocolVersion: 2 },
     { actionProtocolVersion: 0 },
     { modes: [] },
+    { modes: new Array(1) },
+    { modes: [, "follow"] },
     { modes: ["follow", "follow"] },
     { modes: ["admin"] },
     { maxDecisionHz: 0 },
