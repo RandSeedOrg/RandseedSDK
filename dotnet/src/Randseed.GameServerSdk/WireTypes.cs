@@ -32,6 +32,172 @@ public sealed class GameManifest
     [JsonPropertyName("optionsSchema")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OptionsSchema { get; init; }
+
+    [JsonPropertyName("resultDefinition")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public GameResultDefinition? ResultDefinition { get; init; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+public sealed class GameResultDefinition
+{
+    [JsonPropertyName("version")]
+    [JsonRequired]
+    public string Version { get; init; } = string.Empty;
+
+    [JsonPropertyName("unitTypes")]
+    [JsonRequired]
+    public IReadOnlyList<string> UnitTypes { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("metrics")]
+    [JsonRequired]
+    public IReadOnlyList<GameMetricDefinition> Metrics { get; init; } = Array.Empty<GameMetricDefinition>();
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+public sealed class GameMetricDefinition
+{
+    [JsonPropertyName("id")]
+    [JsonRequired]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("scope")]
+    [JsonRequired]
+    public string Scope { get; init; } = string.Empty;
+
+    [JsonPropertyName("unit")]
+    [JsonRequired]
+    public string Unit { get; init; } = string.Empty;
+
+    [JsonPropertyName("unitTypes")]
+    [JsonRequired]
+    public IReadOnlyList<string> UnitTypes { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("aggregation")]
+    [JsonRequired]
+    public JsonElement Aggregation { get; init; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+public sealed class GameResultParticipant
+{
+    [JsonPropertyName("playerId")]
+    [JsonRequired]
+    public string PlayerId { get; init; } = string.Empty;
+
+    [JsonPropertyName("teamId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TeamId { get; init; }
+
+    [JsonPropertyName("outcome")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Outcome { get; init; }
+
+    [JsonPropertyName("rank")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonConverter(typeof(NullableSafeIntegerInt64JsonConverter))]
+    public long? Rank { get; init; }
+
+    [JsonPropertyName("metrics")]
+    [JsonRequired]
+    public IReadOnlyDictionary<string, double> Metrics { get; init; } = new Dictionary<string, double>();
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+public sealed class GameResultTeam
+{
+    [JsonPropertyName("teamId")]
+    [JsonRequired]
+    public string TeamId { get; init; } = string.Empty;
+
+    [JsonPropertyName("outcome")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Outcome { get; init; }
+
+    [JsonPropertyName("rank")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonConverter(typeof(NullableSafeIntegerInt64JsonConverter))]
+    public long? Rank { get; init; }
+
+    [JsonPropertyName("metrics")]
+    [JsonRequired]
+    public IReadOnlyDictionary<string, double> Metrics { get; init; } = new Dictionary<string, double>();
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+public sealed class GameResultCorrection
+{
+    [JsonPropertyName("action")]
+    [JsonRequired]
+    public string Action { get; init; } = string.Empty;
+
+    [JsonPropertyName("supersedesEventId")]
+    [JsonRequired]
+    public string SupersedesEventId { get; init; } = string.Empty;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+public sealed class GameResultEvent
+{
+    [JsonPropertyName("schemaVersion")]
+    [JsonRequired]
+    public int SchemaVersion { get; init; }
+
+    [JsonPropertyName("eventId")]
+    [JsonRequired]
+    public string EventId { get; init; } = string.Empty;
+
+    [JsonPropertyName("matchId")]
+    [JsonRequired]
+    public string MatchId { get; init; } = string.Empty;
+
+    [JsonPropertyName("unitId")]
+    [JsonRequired]
+    public string UnitId { get; init; } = string.Empty;
+
+    [JsonPropertyName("unitType")]
+    [JsonRequired]
+    public string UnitType { get; init; } = string.Empty;
+
+    [JsonPropertyName("rulesVersion")]
+    [JsonRequired]
+    public string RulesVersion { get; init; } = string.Empty;
+
+    [JsonPropertyName("definitionVersion")]
+    [JsonRequired]
+    public string DefinitionVersion { get; init; } = string.Empty;
+
+    [JsonPropertyName("occurredAt")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonConverter(typeof(NullableSafeIntegerInt64JsonConverter))]
+    public long? OccurredAt { get; init; }
+
+    [JsonPropertyName("participants")]
+    [JsonRequired]
+    public IReadOnlyList<GameResultParticipant> Participants { get; init; } = Array.Empty<GameResultParticipant>();
+
+    [JsonPropertyName("teams")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GameResultTeam>? Teams { get; init; }
+
+    [JsonPropertyName("correction")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public GameResultCorrection? Correction { get; init; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
 
 public sealed class MatchConfig
@@ -76,6 +242,10 @@ public sealed class InitResult
     [JsonPropertyName("broadcasts")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement Broadcasts { get; init; }
+
+    [JsonPropertyName("resultUnits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GameResultEvent>? ResultUnits { get; init; }
 }
 
 public sealed record TickRequest
@@ -138,6 +308,10 @@ public sealed class TickResult
     [JsonPropertyName("persist")]
     [JsonRequired]
     public bool Persist { get; init; }
+
+    [JsonPropertyName("resultUnits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GameResultEvent>? ResultUnits { get; init; }
 }
 
 public sealed class PlayerEventRequest
@@ -160,6 +334,10 @@ public sealed class PlayerEventResult
     [JsonPropertyName("broadcasts")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement Broadcasts { get; init; }
+
+    [JsonPropertyName("resultUnits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GameResultEvent>? ResultUnits { get; init; }
 }
 
 public sealed class IsGameOverRequest
@@ -182,6 +360,10 @@ public sealed class GameResult
     [JsonPropertyName("nextMatchPolicy")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public NextMatchPolicy? NextMatchPolicy { get; init; }
+
+    [JsonPropertyName("resultUnits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GameResultEvent>? ResultUnits { get; init; }
 }
 
 public sealed class NextMatchPolicy
@@ -234,6 +416,10 @@ public sealed class CommandResult
     [JsonPropertyName("broadcasts")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement Broadcasts { get; init; }
+
+    [JsonPropertyName("resultUnits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GameResultEvent>? ResultUnits { get; init; }
 }
 
 public sealed class HealthResponse

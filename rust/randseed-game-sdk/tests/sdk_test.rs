@@ -4,11 +4,12 @@
 
 use async_trait::async_trait;
 use randseed_game_sdk::{
-    create_game_router, evaluate_replay_storage_tier, validate_replay_data_v2, AgentControlMode,
-    AgentGameCapabilities, CommandResult, GameCommand, GameManifest, GameResult, GameServer,
-    HealthResponse, InitResult, MatchConfig, MatchOptions, MatchSummary, Mulberry32,
-    NextMatchPolicy, PlatformClient, PlayerEventResult, ReplayDataV2, ReplayInputItem,
-    ReplayStorageTier, SdkError, TickContext, TickResult,
+    create_game_router, evaluate_replay_storage_tier, validate_game_result_units,
+    validate_replay_data_v2, AgentControlMode, AgentGameCapabilities, CommandResult, GameCommand,
+    GameManifest, GameResult, GameResultDefinition, GameResultEvent, GameServer, HealthResponse,
+    InitResult, MatchConfig, MatchOptions, MatchSummary, Mulberry32, NextMatchPolicy,
+    PlatformClient, PlayerEventResult, ReplayDataV2, ReplayInputItem, ReplayStorageTier, SdkError,
+    TickContext, TickResult,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -168,6 +169,82 @@ fn protocol_v1_validation_rejects_out_of_range_values() {
     assert!(context.validate().is_err());
 }
 
+#[test]
+fn game_result_unit_v1_matches_the_shared_fixture() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/game-result-event-v1.json")).unwrap();
+    let definition: GameResultDefinition =
+        serde_json::from_value(fixture["definition"].clone()).unwrap();
+    let event: GameResultEvent = serde_json::from_value(fixture["event"].clone()).unwrap();
+
+    definition.validate().unwrap();
+    event.validate_against(&definition).unwrap();
+    validate_game_result_units(Some(std::slice::from_ref(&event)), Some(&definition)).unwrap();
+    assert_eq!(serde_json::to_value(event).unwrap(), fixture["event"]);
+}
+
+#[test]
+fn game_result_unit_v1_rejects_invalid_or_host_bound_fields() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/game-result-event-v1.json")).unwrap();
+    let definition: GameResultDefinition =
+        serde_json::from_value(fixture["definition"].clone()).unwrap();
+    let mut event: GameResultEvent = serde_json::from_value(fixture["event"].clone()).unwrap();
+
+    event.participants[0].metrics.insert("winRate".into(), 1.0);
+    assert!(event.validate_against(&definition).is_err());
+
+    let mut host_bound = fixture["event"].clone();
+    host_bound["gameId"] = json!("forged-game");
+    assert!(serde_json::from_value::<GameResultEvent>(host_bound).is_err());
+
+    let mut invalid_rank: GameResultEvent =
+        serde_json::from_value(fixture["event"].clone()).unwrap();
+    invalid_rank.participants[0].rank = Some(0);
+    assert!(invalid_rank.validate_against(&definition).is_err());
+
+    let mut invalid_correction: GameResultEvent =
+        serde_json::from_value(fixture["event"].clone()).unwrap();
+    invalid_correction.correction = Some(randseed_game_sdk::GameResultCorrection {
+        action: randseed_game_sdk::GameResultCorrectionAction::Retract,
+        supersedes_event_id: "result-event-000".into(),
+    });
+    assert!(invalid_correction.validate_against(&definition).is_err());
+}
+
+#[test]
+fn game_result_unit_definition_and_transition_limits_are_enforced() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/game-result-event-v1.json")).unwrap();
+    let definition: GameResultDefinition =
+        serde_json::from_value(fixture["definition"].clone()).unwrap();
+    let mut too_many_metrics = definition.clone();
+    too_many_metrics.metrics = (0..129)
+        .map(|index| {
+            let mut metric = definition.metrics[0].clone();
+            metric.id = format!("metric-{index}");
+            metric
+        })
+        .collect();
+    assert!(too_many_metrics.validate().is_err());
+
+    let event: GameResultEvent = serde_json::from_value(fixture["event"].clone()).unwrap();
+    let mut events = (0..32)
+        .map(|index| {
+            let mut event = event.clone();
+            event.event_id = format!("event-{index}");
+            event.unit_id = format!("unit-{index}");
+            event
+        })
+        .collect::<Vec<_>>();
+    validate_game_result_units(Some(&events), Some(&definition)).unwrap();
+    let mut extra = event.clone();
+    extra.event_id = "event-32".into();
+    extra.unit_id = "unit-32".into();
+    events.push(extra);
+    assert!(validate_game_result_units(Some(&events), Some(&definition)).is_err());
+}
+
 /// Mock game server used by integration tests.
 struct MockGame;
 
@@ -182,6 +259,7 @@ impl GameServer for MockGame {
             tick_rate_hz: 20.0,
             persistent_table: true,
             options_schema: Some(json!({ "seed": { "type": "number" } })),
+            result_definition: None,
         })
     }
 
@@ -198,6 +276,7 @@ impl GameServer for MockGame {
                 "type": "game_initialized",
                 "matchId": config.match_id,
             })]),
+            result_units: None,
         })
     }
 
@@ -226,6 +305,7 @@ impl GameServer for MockGame {
             state,
             broadcasts,
             persist: is_persist,
+            result_units: None,
         })
     }
 
@@ -243,6 +323,7 @@ impl GameServer for MockGame {
             broadcasts: Some(vec![
                 json!({ "type": "player_joined", "playerId": player_id }),
             ]),
+            result_units: None,
         })
     }
 
@@ -259,6 +340,7 @@ impl GameServer for MockGame {
             broadcasts: Some(vec![
                 json!({ "type": "player_left", "playerId": player_id }),
             ]),
+            result_units: None,
         })
     }
 
@@ -288,12 +370,14 @@ impl GameServer for MockGame {
                     timeout_ms: 0,
                     carryover: Some(json!({ "score": 100 })),
                 }),
+                result_units: None,
             })
         } else {
             Ok(GameResult {
                 over: false,
                 summary: None,
                 next_match_policy: None,
+                result_units: None,
             })
         }
     }
@@ -318,9 +402,14 @@ impl GameServer for MockGame {
                 .and_then(|data| data.get("count"))
                 .cloned()
                 .unwrap_or(json!(0));
+            let fixture: serde_json::Value =
+                serde_json::from_str(include_str!("fixtures/room-host-v1.json")).unwrap();
+            let result_units =
+                serde_json::from_value(fixture["commandResponse"]["resultUnits"].clone()).unwrap();
             return Ok(CommandResult {
                 state,
                 broadcasts: Some(vec![json!({ "type": "counter.reset" })]),
+                result_units: Some(result_units),
             });
         }
 
@@ -330,6 +419,7 @@ impl GameServer for MockGame {
             broadcasts: Some(vec![
                 json!({ "type": "command_executed", "cmdType": cmd.command_type }),
             ]),
+            result_units: None,
         })
     }
 }

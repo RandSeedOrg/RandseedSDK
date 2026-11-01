@@ -22,6 +22,7 @@ var commandResult = Read<CommandResult>("commandResponse");
 
 VerifyMulberryVectors();
 await VerifyHttpHostAsync();
+await VerifyResultUnitHostAsync();
 Console.WriteLine("All .NET SDK fixture, PRNG, validation, and HTTP serialization checks passed.");
 
 T Read<T>(string property) where T : class =>
@@ -327,6 +328,123 @@ async Task VerifyHttpHostAsync()
     }
 }
 
+async Task VerifyResultUnitHostAsync()
+{
+    var resultFixturePath = Path.Combine(AppContext.BaseDirectory, "protocol", "game-result-event-v1.json");
+    using var resultFixture = JsonDocument.Parse(await File.ReadAllTextAsync(resultFixturePath));
+    var resultDefinition = JsonSerializer.Deserialize<GameResultDefinition>(
+        resultFixture.RootElement.GetProperty("definition").GetRawText(),
+        jsonOptions) ?? throw new InvalidOperationException("Result definition fixture was null.");
+    var resultEvent = JsonSerializer.Deserialize<GameResultEvent>(
+        resultFixture.RootElement.GetProperty("event").GetRawText(),
+        jsonOptions) ?? throw new InvalidOperationException("Result event fixture was null.");
+    Assert(ResultUnitValidator.ValidateDefinition(resultDefinition) is null,
+        "Shared Result Unit definition was rejected.");
+    Assert(ResultUnitValidator.ValidateEvent(resultEvent, resultDefinition) is null,
+        "Shared Result Unit event was rejected.");
+    Assert(ResultUnitValidator.ValidateEvents(new[] { resultEvent }, resultDefinition) is null,
+        "Shared Result Unit transition was rejected.");
+    var undeclaredMetricEvent = new GameResultEvent
+    {
+        SchemaVersion = resultEvent.SchemaVersion,
+        EventId = "undeclared-metric",
+        MatchId = resultEvent.MatchId,
+        UnitId = "undeclared-metric-unit",
+        UnitType = resultEvent.UnitType,
+        RulesVersion = resultEvent.RulesVersion,
+        DefinitionVersion = resultEvent.DefinitionVersion,
+        Participants = new[]
+        {
+            new GameResultParticipant
+            {
+                PlayerId = resultEvent.Participants[0].PlayerId,
+                Metrics = new Dictionary<string, double> { ["winRate"] = 1 }
+            }
+        }
+    };
+    Assert(ResultUnitValidator.ValidateEvent(undeclaredMetricEvent, resultDefinition) is not null,
+        "A derived ratio was accepted as an event metric.");
+    var resultManifest = new GameManifest
+    {
+        Title = manifest.Title,
+        Version = manifest.Version,
+        MinPlayers = manifest.MinPlayers,
+        MaxPlayers = manifest.MaxPlayers,
+        TickRateHz = manifest.TickRateHz,
+        PersistentTable = manifest.PersistentTable,
+        ResultDefinition = resultDefinition
+    };
+    var resultServer = new FixtureGameServer(
+        resultManifest,
+        new InitResult
+        {
+            State = initResult.State,
+            Broadcasts = initResult.Broadcasts,
+            ResultUnits = new[] { resultEvent }
+        },
+        tickResult,
+        playerEventResult,
+        gameResult,
+        commandResult);
+    await using var app = GameServerHost.Create(
+        resultServer,
+        "room-counter",
+        new GameServerHostOptions { Url = "http://127.0.0.1:0" });
+    await app.StartAsync();
+    try
+    {
+        var addresses = app.Services.GetRequiredService<IServer>()
+            .Features.Get<IServerAddressesFeature>()?.Addresses
+            ?? throw new InvalidOperationException("The Result Unit test host did not publish its address.");
+        using var client = new HttpClient { BaseAddress = new Uri(addresses.Single()) };
+        using var response = await PostRawAsync(
+            client, "/init", fixture.GetProperty("config").GetRawText());
+        Assert(response.StatusCode == HttpStatusCode.OK, "Valid Result Unit transition was rejected.");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        AssertJsonEqual(
+            resultFixture.RootElement.GetProperty("event"),
+            body.RootElement.GetProperty("resultUnits")[0],
+            "Result Unit event response");
+
+        resultServer.InitResultOverride = new InitResult
+        {
+            State = initResult.State,
+            ResultUnits = new[]
+            {
+                new GameResultEvent
+                {
+                    SchemaVersion = resultEvent.SchemaVersion,
+                    EventId = "invalid-rank",
+                    MatchId = resultEvent.MatchId,
+                    UnitId = "invalid-rank-unit",
+                    UnitType = resultEvent.UnitType,
+                    RulesVersion = resultEvent.RulesVersion,
+                    DefinitionVersion = resultEvent.DefinitionVersion,
+                    Participants = resultEvent.Participants.Select(participant => new GameResultParticipant
+                    {
+                        PlayerId = participant.PlayerId,
+                        TeamId = participant.TeamId,
+                        Outcome = participant.Outcome,
+                        Rank = 0,
+                        Metrics = participant.Metrics
+                    }).ToArray(),
+                    Teams = resultEvent.Teams
+                }
+            }
+        };
+        using var invalidResponse = await PostRawAsync(
+            client, "/init", fixture.GetProperty("config").GetRawText());
+        Assert(invalidResponse.StatusCode == HttpStatusCode.InternalServerError,
+            "Invalid result data was returned as a successful response.");
+        Assert(!(await invalidResponse.Content.ReadAsStringAsync())
+            .Contains("invalid-rank", StringComparison.Ordinal), "Invalid result details leaked to the client.");
+    }
+    finally
+    {
+        await app.StopAsync();
+    }
+}
+
 async Task VerifyGetAsync(HttpClient client, string path, JsonElement expected)
 {
     using var response = await client.GetAsync(path);
@@ -429,14 +547,17 @@ sealed class FixtureGameServer : IGameServer
 
     public JsonElement? InitStateOverride { get; set; }
 
+    public InitResult? InitResultOverride { get; set; }
+
     public GameResult? GameResultOverride { get; set; }
 
     public GameManifest GetManifest() => manifest;
 
     public ValueTask<InitResult> InitAsync(MatchConfig config, CancellationToken cancellationToken) =>
-        ValueTask.FromResult(InitStateOverride is JsonElement state
+        ValueTask.FromResult(InitResultOverride ??
+            (InitStateOverride is JsonElement state
             ? new InitResult { State = state, Broadcasts = initResult.Broadcasts }
-            : initResult);
+            : initResult));
 
     public ValueTask<TickResult> TickAsync(TickRequest request, CancellationToken cancellationToken)
     {

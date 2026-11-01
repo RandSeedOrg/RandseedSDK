@@ -5,9 +5,9 @@
 use crate::agent_capabilities::AgentGameCapabilities;
 use crate::errors::SdkError;
 use crate::types::{
-    CommandRequest, CommandResult, GameCommand, GameManifest, GameResult, HealthResponse,
-    InitResult, IsGameOverRequest, MatchConfig, PlayerEventRequest, PlayerEventResult, TickContext,
-    TickRequest, TickResult,
+    validate_game_result_units, CommandRequest, CommandResult, GameCommand, GameManifest,
+    GameResult, GameResultEvent, HealthResponse, InitResult, IsGameOverRequest, MatchConfig,
+    PlayerEventRequest, PlayerEventResult, TickContext, TickRequest, TickResult,
 };
 use async_trait::async_trait;
 use axum::{
@@ -140,6 +140,21 @@ fn map_error_to_response(err: SdkError) -> (StatusCode, Json<ErrorResponse>) {
     }
 }
 
+fn invalid_result_units_response() -> Response {
+    tracing::error!("Game callback returned invalid result units.");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: "Game server returned invalid result units.".into(),
+        }),
+    )
+        .into_response()
+}
+
+fn result_units_are_valid(result_units: Option<&[GameResultEvent]>) -> bool {
+    validate_game_result_units(result_units, None).is_ok()
+}
+
 async fn call_game<T>(future: impl Future<Output = Result<T, SdkError>>) -> Result<T, SdkError> {
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(result) => result,
@@ -212,7 +227,10 @@ async fn handle_init<G: GameServer>(
         return map_error_to_response(e).into_response();
     }
     match call_game(state.game.init(config)).await {
-        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
+            (StatusCode::OK, Json(res)).into_response()
+        }
+        Ok(_) => invalid_result_units_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
@@ -225,7 +243,10 @@ async fn handle_tick<G: GameServer>(
         return map_error_to_response(e).into_response();
     }
     match call_game(state.game.tick(req.ctx, req.state)).await {
-        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
+            (StatusCode::OK, Json(res)).into_response()
+        }
+        Ok(_) => invalid_result_units_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
@@ -241,7 +262,10 @@ async fn handle_player_join<G: GameServer>(
         .into_response();
     }
     match call_game(state.game.on_player_join(req.player_id, req.state)).await {
-        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
+            (StatusCode::OK, Json(res)).into_response()
+        }
+        Ok(_) => invalid_result_units_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
@@ -257,7 +281,10 @@ async fn handle_player_leave<G: GameServer>(
         .into_response();
     }
     match call_game(state.game.on_player_leave(req.player_id, req.state)).await {
-        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
+            (StatusCode::OK, Json(res)).into_response()
+        }
+        Ok(_) => invalid_result_units_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
@@ -268,6 +295,9 @@ async fn handle_is_game_over<G: GameServer>(
 ) -> impl IntoResponse {
     match call_game(state.game.is_game_over(req.state)).await {
         Ok(res) => {
+            if !result_units_are_valid(res.result_units.as_deref()) {
+                return invalid_result_units_response();
+            }
             if res.over {
                 let policy_is_supported = res.next_match_policy.as_ref().is_some_and(|policy| {
                     matches!(
@@ -302,7 +332,10 @@ async fn handle_command<G: GameServer>(
         .into_response();
     }
     match call_game(state.game.on_command(req.command, req.state)).await {
-        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
+            (StatusCode::OK, Json(res)).into_response()
+        }
+        Ok(_) => invalid_result_units_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }

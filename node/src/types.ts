@@ -16,6 +16,68 @@ export interface GameManifest {
   tickRateHz: number;
   persistentTable: boolean;
   optionsSchema?: Record<string, unknown> | boolean;
+  resultDefinition?: GameResultDefinition;
+}
+
+export type ResultMetricScope = "participant" | "team";
+export type ResultOutcome = "win" | "loss" | "draw" | "push";
+
+export type GameMetricAggregation =
+  | "sum"
+  | "min"
+  | "max"
+  | {
+      type: "ratio";
+      numeratorMetricId: string;
+      denominatorMetricId: string;
+    };
+
+export interface GameMetricDefinition {
+  id: string;
+  scope: ResultMetricScope;
+  unit: string;
+  unitTypes: string[];
+  aggregation: GameMetricAggregation;
+}
+
+export interface GameResultDefinition {
+  version: string;
+  unitTypes: string[];
+  metrics: GameMetricDefinition[];
+}
+
+export interface GameResultParticipant {
+  playerId: string;
+  teamId?: string;
+  outcome?: ResultOutcome;
+  rank?: number;
+  metrics: Record<string, number>;
+}
+
+export interface GameResultTeam {
+  teamId: string;
+  outcome?: ResultOutcome;
+  rank?: number;
+  metrics: Record<string, number>;
+}
+
+export interface GameResultCorrection {
+  action: "replace" | "retract";
+  supersedesEventId: string;
+}
+
+export interface GameResultEvent {
+  schemaVersion: 1;
+  eventId: string;
+  matchId: string;
+  unitId: string;
+  unitType: string;
+  rulesVersion: string;
+  definitionVersion: string;
+  occurredAt?: number;
+  participants: GameResultParticipant[];
+  teams?: GameResultTeam[];
+  correction?: GameResultCorrection;
 }
 
 export interface MatchOptions {
@@ -56,17 +118,20 @@ export interface TickContext<TInput = unknown, TCommand = unknown> {
 export interface InitResult<TState = unknown> {
   state: TState;
   broadcasts?: unknown[];
+  resultUnits?: GameResultEvent[];
 }
 
 export interface TickResult<TState = unknown> {
   state: TState;
   broadcasts?: unknown[];
   persist: boolean;
+  resultUnits?: GameResultEvent[];
 }
 
 export interface PlayerEventResult<TState = unknown> {
   state: TState;
   broadcasts?: unknown[];
+  resultUnits?: GameResultEvent[];
 }
 
 export type NextMatchMode = "auto_next_match" | "wait_for_ready" | "close_room";
@@ -89,11 +154,13 @@ export interface GameResult {
   over: boolean;
   summary?: MatchSummary;
   nextMatchPolicy?: NextMatchPolicy;
+  resultUnits?: GameResultEvent[];
 }
 
 export interface CommandResult<TState = unknown> {
   state: TState;
   broadcasts?: unknown[];
+  resultUnits?: GameResultEvent[];
 }
 
 export interface GameServer<TState = unknown, TInput = unknown, TCommand = unknown> {

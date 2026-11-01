@@ -18,6 +18,8 @@ using randseed::CommandResult;
 using randseed::Game;
 using randseed::GameManifest;
 using randseed::GameOverResult;
+using randseed::GameResultDefinition;
+using randseed::GameResultEvent;
 using randseed::InitResult;
 using randseed::Json;
 using randseed::MatchConfig;
@@ -36,7 +38,11 @@ public:
     explicit FixtureGame(Json fixture) : fixture_(std::move(fixture)) {}
 
     GameManifest manifest() const override {
-        return fixture_.at("manifest").get<GameManifest>();
+        auto result = fixture_.at("manifest").get<GameManifest>();
+        if (result_definition_) {
+            result.result_definition = result_definition_;
+        }
+        return result;
     }
 
     InitResult init(const MatchConfig&) const override {
@@ -44,17 +50,21 @@ public:
             throw std::runtime_error("private callback failure detail");
         }
         const auto& expected = fixture_.at("initResponse");
-        return InitResult{
+        InitResult result{
             .state = expected.at("state"),
-            .broadcasts = expected.value("broadcasts", Json::array())};
+            .broadcasts = expected.value("broadcasts", Json::array()),
+            .result_units = result_units_for("initResponse")};
+        return result;
     }
 
     TickResult tick(const TickContext&, const Json&) const override {
         const auto& expected = fixture_.at("tickResponse");
-        return TickResult{
+        TickResult result{
             .state = expected.at("state"),
             .broadcasts = expected.value("broadcasts", Json::array()),
-            .persist = expected.at("persist").get<bool>()};
+            .persist = expected.at("persist").get<bool>(),
+            .result_units = result_units_for("tickResponse")};
+        return result;
     }
 
     PlayerEventResult on_player_join(
@@ -75,18 +85,28 @@ public:
             .over = expected.at("over").get<bool>(),
             .summary = state.is_object() && state.contains("testSummary")
                 ? state.at("testSummary") : expected.at("summary"),
-            .next_match_policy = expected.at("nextMatchPolicy")};
+            .next_match_policy = expected.at("nextMatchPolicy"),
+            .result_units = result_units_for("gameOverResponse")};
     }
 
     CommandResult on_command(const Json&, const Json&) const override {
         const auto& expected = fixture_.at("commandResponse");
         return CommandResult{
             .state = expected.at("state"),
-            .broadcasts = expected.value("broadcasts", Json::array())};
+            .broadcasts = expected.value("broadcasts", Json::array()),
+            .result_units = result_units_for("commandResponse")};
     }
 
     void fail_init(bool value) {
         fail_init_ = value;
+    }
+
+    void set_result_definition(GameResultDefinition definition) {
+        result_definition_ = std::move(definition);
+    }
+
+    void set_result_units(std::vector<GameResultEvent> result_units) {
+        result_units_ = std::move(result_units);
     }
 
     const Json& fixture() const {
@@ -94,15 +114,30 @@ public:
     }
 
 private:
+    std::optional<std::vector<GameResultEvent>> result_units_for(
+        std::string_view response_name) const {
+        if (result_units_) {
+            return result_units_;
+        }
+        const auto& response = fixture_.at(std::string(response_name));
+        if (!response.contains("resultUnits")) {
+            return std::nullopt;
+        }
+        return response.at("resultUnits").get<std::vector<GameResultEvent>>();
+    }
+
     PlayerEventResult player_event_result() const {
         const auto& expected = fixture_.at("playerEventResponse");
         return PlayerEventResult{
             .state = expected.at("state"),
-            .broadcasts = expected.value("broadcasts", Json::array())};
+            .broadcasts = expected.value("broadcasts", Json::array()),
+            .result_units = result_units_for("playerEventResponse")};
     }
 
     Json fixture_;
     bool fail_init_{false};
+    std::optional<GameResultDefinition> result_definition_;
+    std::optional<std::vector<GameResultEvent>> result_units_;
 };
 
 Json read_fixture(const char* path) {
@@ -154,38 +189,51 @@ void test_fixture_serialization(const Json& fixture) {
             fixture.at("commandRequest"),
         "command request serialization differs from fixture");
 
+    const auto result_units = [](const Json& response) {
+        if (!response.contains("resultUnits")) {
+            return std::optional<std::vector<GameResultEvent>>{std::nullopt};
+        }
+        return std::optional<std::vector<GameResultEvent>>{
+            response.at("resultUnits").get<std::vector<GameResultEvent>>()};
+    };
+
     const auto& init = fixture.at("initResponse");
     require(
         Json(InitResult{
             .state = init.at("state"),
-            .broadcasts = init.at("broadcasts")}) == init,
+            .broadcasts = init.at("broadcasts"),
+            .result_units = result_units(init)}) == init,
         "init response serialization differs from fixture");
     const auto& tick = fixture.at("tickResponse");
     require(
         Json(TickResult{
             .state = tick.at("state"),
             .broadcasts = tick.at("broadcasts"),
-            .persist = tick.at("persist").get<bool>()}) == tick,
+            .persist = tick.at("persist").get<bool>(),
+            .result_units = result_units(tick)}) == tick,
         "tick response serialization differs from fixture");
     const auto& player_event = fixture.at("playerEventResponse");
     require(
         Json(PlayerEventResult{
             .state = player_event.at("state"),
-            .broadcasts = player_event.at("broadcasts")}) == player_event,
+            .broadcasts = player_event.at("broadcasts"),
+            .result_units = result_units(player_event)}) == player_event,
         "player-event response serialization differs from fixture");
     const auto& game_over = fixture.at("gameOverResponse");
     require(
         Json(GameOverResult{
             .over = game_over.at("over").get<bool>(),
             .summary = game_over.at("summary"),
-            .next_match_policy = game_over.at("nextMatchPolicy")}) ==
+            .next_match_policy = game_over.at("nextMatchPolicy"),
+            .result_units = result_units(game_over)}) ==
             game_over,
         "game-over response serialization differs from fixture");
     const auto& command = fixture.at("commandResponse");
     require(
         Json(CommandResult{
             .state = command.at("state"),
-            .broadcasts = command.at("broadcasts")}) == command,
+            .broadcasts = command.at("broadcasts"),
+            .result_units = result_units(command)}) == command,
         "command response serialization differs from fixture");
 }
 
@@ -416,17 +464,92 @@ void test_http_lifecycle(const Json& fixture) {
     host.stop();
 }
 
+void test_http_result_unit_outputs(
+    const Json& room_fixture,
+    const Json& result_fixture) {
+    const auto definition =
+        randseed::parse_game_result_definition(result_fixture.at("definition"));
+    const auto event =
+        randseed::parse_game_result_event(result_fixture.at("event"), &definition);
+    FixtureGame game(room_fixture);
+    game.set_result_definition(definition);
+    game.set_result_units({event});
+    randseed::HostOptions options;
+    options.game_id = "room-counter";
+    randseed::RoomHost host(game, std::move(options));
+    const auto port = host.start_on_any_port();
+    require(port.has_value(), "HTTP host failed to bind for result-unit test");
+    httplib::Client client("127.0.0.1", *port);
+
+    Json expected_manifest = room_fixture.at("manifest");
+    expected_manifest["resultDefinition"] = result_fixture.at("definition");
+    require(
+        require_response(client.Get("/manifest"), 200) == expected_manifest,
+        "GET /manifest omitted resultDefinition");
+
+    const auto check_result = [&client, &result_fixture, &room_fixture](
+                                  const char* path,
+                                  const Json& request,
+                                  const char* fixture_response) {
+        Json expected = room_fixture.at(fixture_response);
+        expected["resultUnits"] = Json::array({result_fixture.at("event")});
+        require(
+            require_response(post_json(client, path, request), 200) == expected,
+            "transition response omitted or changed resultUnits");
+    };
+
+    check_result("/init", room_fixture.at("config"), "initResponse");
+    check_result("/tick", room_fixture.at("tickRequest"), "tickResponse");
+    check_result(
+        "/onPlayerJoin",
+        room_fixture.at("playerEventRequest"),
+        "playerEventResponse");
+    check_result(
+        "/onPlayerLeave",
+        room_fixture.at("playerEventRequest"),
+        "playerEventResponse");
+    check_result(
+        "/isGameOver",
+        room_fixture.at("isGameOverRequest"),
+        "gameOverResponse");
+    check_result(
+        "/onCommand",
+        room_fixture.at("commandRequest"),
+        "commandResponse");
+    host.stop();
+
+    auto invalid_event = event;
+    invalid_event.participants[0].metrics["unpublishedMetric"] = 1.0;
+    FixtureGame invalid_game(room_fixture);
+    invalid_game.set_result_definition(definition);
+    invalid_game.set_result_units({std::move(invalid_event)});
+    randseed::HostOptions invalid_options;
+    invalid_options.game_id = "room-counter";
+    randseed::RoomHost invalid_host(invalid_game, std::move(invalid_options));
+    const auto invalid_port = invalid_host.start_on_any_port();
+    require(invalid_port.has_value(), "HTTP host failed to bind for invalid results");
+    httplib::Client invalid_client("127.0.0.1", *invalid_port);
+    const Json invalid_response = require_response(
+        post_json(invalid_client, "/tick", room_fixture.at("tickRequest")), 500);
+    require(
+        invalid_response.at("error") == "Internal server error",
+        "invalid result declaration error was not sanitized");
+    invalid_host.stop();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 2) {
-            throw std::runtime_error("Expected shared fixture path");
+        if (argc != 3) {
+            throw std::runtime_error("Expected room-host and Result Unit fixture paths");
         }
         const Json fixture = read_fixture(argv[1]);
+        const Json result_fixture = read_fixture(argv[2]);
         test_fixture_serialization(fixture);
         test_prng_vectors(fixture);
         test_http_lifecycle(fixture);
+        test_http_result_unit_outputs(fixture, result_fixture);
         std::cout << "RandSeed C++ room-host tests passed\n";
         return 0;
     } catch (const std::exception& error) {

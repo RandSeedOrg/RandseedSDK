@@ -43,6 +43,22 @@ It listens on `0.0.0.0:8080` by default. Set `PORT` to override the port. The
 example demonstrates deterministic tick processing, player lifecycle events,
 trusted reset commands, and a match-ending policy.
 
+## Result Units
+
+Declare a versioned `GameResultDefinition` in `GameManifest`, then return
+`GameResultEvent` values from any lifecycle transition. A match may emit
+multiple rounds, laps, stages, or a match result without requiring one winner
+or a generic score. The language-independent contract and event example are
+in the [Result Unit protocol](../../protocol/room-host-v1.md#result-units-and-metrics)
+and [shared fixture](../../protocol/fixtures/game-result-event-v1.json).
+Use `validate_game_result_units` to check a transition; use
+`GameResultEvent::validate_against` to check event metrics against a definition.
+
+The server validates event structure, but it does not persist or deliver the
+outbox. The trusted room host must validate the published definition, match,
+roster, source identity, and archive receipt. Keep event IDs stable across
+retries; corrections are append-only events.
+
 ## Protocol and determinism
 
 - Each request body is limited to 1 MiB. Match sequence numbers, ticks, and

@@ -12,5 +12,8 @@
     <Content Include="../../protocol/fixtures/room-host-v1.json"
              Link="protocol/room-host-v1.json"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../protocol/fixtures/game-result-event-v1.json"
+             Link="protocol/game-result-event-v1.json"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

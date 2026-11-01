@@ -62,5 +62,14 @@ if(BUILD_TESTING)
         NAME randseed_room_host_contract
         COMMAND randseed_room_host_tests
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/../../protocol/fixtures/room-host-v1.json"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../protocol/fixtures/game-result-event-v1.json"
+    )
+
+    add_executable(randseed_result_unit_tests tests/result_unit_tests.cpp)
+    target_link_libraries(randseed_result_unit_tests PRIVATE randseed::room_host)
+    add_test(
+        NAME randseed_result_unit_contract
+        COMMAND randseed_result_unit_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/../protocol/fixtures/game-result-event-v1.json"
     )
 endif()
