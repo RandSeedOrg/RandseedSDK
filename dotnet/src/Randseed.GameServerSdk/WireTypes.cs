@@ -55,7 +55,6 @@ public sealed class MatchConfig
 
     [JsonPropertyName("options")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    [JsonRequired]
     public JsonElement Options { get; init; }
 
     [JsonPropertyName("carryover")]

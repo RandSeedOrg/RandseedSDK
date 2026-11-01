@@ -43,6 +43,14 @@ fn room_host_wire_roundtrips_opaque_carryover_and_frame_context() {
     assert_eq!(config.carryover, Some(json!(17)));
     assert_eq!(config.options.seed, u32::MAX as f64);
     assert_json_roundtrip::<MatchConfig>(&fixture["config"], fixture["config"].clone());
+    let mut missing_options = fixture["config"].clone();
+    missing_options.as_object_mut().unwrap().remove("options");
+    let defaulted: MatchConfig = serde_json::from_value(missing_options.clone()).unwrap();
+    assert_eq!(defaulted.options.seed, 0.0);
+    missing_options["options"] = json!({});
+    assert!(serde_json::from_value::<MatchConfig>(missing_options.clone()).is_ok());
+    missing_options["options"] = json!(null);
+    assert!(serde_json::from_value::<MatchConfig>(missing_options).is_err());
     let mut null_tick_rate = fixture["config"].clone();
     null_tick_rate["tickRateHz"] = serde_json::Value::Null;
     assert!(serde_json::from_value::<MatchConfig>(null_tick_rate).is_err());

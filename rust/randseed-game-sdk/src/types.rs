@@ -73,6 +73,7 @@ impl GameManifest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MatchOptions {
     /// Initial seed for a deterministic pseudo-random number generator.
+    #[serde(default)]
     pub seed: f64,
     /// Additional game-specific options.
     #[serde(flatten)]
@@ -103,6 +104,7 @@ pub struct MatchConfig {
     #[serde(rename = "matchSeq")]
     pub match_seq: u64,
     /// Game-specific match options.
+    #[serde(default)]
     pub options: MatchOptions,
     /// Opaque carryover data from a previous match.
     #[serde(skip_serializing_if = "Option::is_none")]

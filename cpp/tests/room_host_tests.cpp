@@ -116,6 +116,19 @@ Json read_fixture(const char* path) {
 }
 
 void test_fixture_serialization(const Json& fixture) {
+    auto optional_options = fixture.at("config");
+    optional_options.erase("options");
+    require(optional_options.get<MatchConfig>().options == Json::object(), "omitted options must be accepted");
+    optional_options["options"] = Json::object();
+    require(optional_options.get<MatchConfig>().options == Json::object(), "empty options must be accepted");
+    optional_options["options"] = nullptr;
+    bool invalid_options_rejected = false;
+    try {
+        optional_options.get<MatchConfig>();
+    } catch (const std::exception&) {
+        invalid_options_rejected = true;
+    }
+    require(invalid_options_rejected, "null options must be rejected");
     require(
         Json(fixture.at("manifest").get<GameManifest>()) == fixture.at("manifest"),
         "manifest serialization differs from fixture");
