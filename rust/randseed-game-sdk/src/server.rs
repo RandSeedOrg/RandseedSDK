@@ -76,6 +76,14 @@ pub trait GameServer: Send + Sync + 'static {
         state: serde_json::Value,
     ) -> Result<PlayerEventResult, SdkError>;
 
+    /// Handle a player joining or reconnecting with full request context (including extension fields).
+    async fn on_player_join_ext(
+        &self,
+        req: PlayerEventRequest,
+    ) -> Result<PlayerEventResult, SdkError> {
+        self.on_player_join(req.player_id, req.state).await
+    }
+
     /// Handle a player leaving.
     async fn on_player_leave(
         &self,
@@ -83,8 +91,21 @@ pub trait GameServer: Send + Sync + 'static {
         state: serde_json::Value,
     ) -> Result<PlayerEventResult, SdkError>;
 
+    /// Handle a player leaving with full request context (including extension fields).
+    async fn on_player_leave_ext(
+        &self,
+        req: PlayerEventRequest,
+    ) -> Result<PlayerEventResult, SdkError> {
+        self.on_player_leave(req.player_id, req.state).await
+    }
+
     /// Determine whether the match has ended and, if so, return a next-match policy.
     async fn is_game_over(&self, state: serde_json::Value) -> Result<GameResult, SdkError>;
+
+    /// Determine whether the match has ended with full request context (including extension fields).
+    async fn is_game_over_ext(&self, req: IsGameOverRequest) -> Result<GameResult, SdkError> {
+        self.is_game_over(req.state).await
+    }
 
     /// Handle a trusted host command. The default implementation is unsupported.
     async fn on_command(
@@ -388,15 +409,16 @@ async fn handle_tick<G: GameServer>(
 
 async fn handle_player_join<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
-    ProtocolJson(req): ProtocolJson<PlayerEventRequest>,
+    ProtocolJson(mut req): ProtocolJson<PlayerEventRequest>,
 ) -> impl IntoResponse {
-    if req.player_id.trim().is_empty() {
+    let Some(resolved_id) = req.resolved_player_id() else {
         return map_error_to_response(SdkError::Validation(
             "playerId must be a non-empty string.".into(),
         ))
         .into_response();
-    }
-    match call_game(state.game.on_player_join(req.player_id, req.state)).await {
+    };
+    req.player_id = resolved_id;
+    match call_game(state.game.on_player_join_ext(req)).await {
         Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
             (StatusCode::OK, Json(res)).into_response()
         }
@@ -407,15 +429,16 @@ async fn handle_player_join<G: GameServer>(
 
 async fn handle_player_leave<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
-    ProtocolJson(req): ProtocolJson<PlayerEventRequest>,
+    ProtocolJson(mut req): ProtocolJson<PlayerEventRequest>,
 ) -> impl IntoResponse {
-    if req.player_id.trim().is_empty() {
+    let Some(resolved_id) = req.resolved_player_id() else {
         return map_error_to_response(SdkError::Validation(
             "playerId must be a non-empty string.".into(),
         ))
         .into_response();
-    }
-    match call_game(state.game.on_player_leave(req.player_id, req.state)).await {
+    };
+    req.player_id = resolved_id;
+    match call_game(state.game.on_player_leave_ext(req)).await {
         Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
             (StatusCode::OK, Json(res)).into_response()
         }
@@ -428,7 +451,7 @@ async fn handle_is_game_over<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
     ProtocolJson(req): ProtocolJson<IsGameOverRequest>,
 ) -> impl IntoResponse {
-    match call_game(state.game.is_game_over(req.state)).await {
+    match call_game(state.game.is_game_over_ext(req)).await {
         Ok(res) => {
             if !result_units_are_valid(res.result_units.as_deref()) {
                 return invalid_result_units_response();

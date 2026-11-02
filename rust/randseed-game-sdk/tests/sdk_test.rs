@@ -1312,3 +1312,48 @@ async fn test_platform_client_custom_mock() {
     let val = client.kv_get("key1").await.unwrap();
     assert_eq!(val, Some(json!("val1")));
 }
+
+#[test]
+fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
+    let config_json = json!({
+        "matchId": "ext-match-1",
+        "players": [
+            { "id": "p1", "name": "Alice", "skinId": "neon" },
+            "p2"
+        ],
+        "options": { "seed": 42.0 },
+        "customMode": "arena"
+    });
+    let config: MatchConfig = serde_json::from_value(config_json).unwrap();
+    config.validate().unwrap();
+    assert_eq!(config.players, vec!["p1".to_string(), "p2".to_string()]);
+    assert_eq!(config.options.extra.get("customMode"), Some(&json!("arena")));
+    assert!(config.options.extra.get("playerObjects").is_some());
+
+    let flat_input: randseed_game_sdk::TickInput = serde_json::from_value(json!({
+        "playerId": "p1",
+        "targetAngle": 1.25,
+        "isBoosting": true
+    }))
+    .unwrap();
+    assert_eq!(flat_input.player_id, "p1");
+    assert_eq!(flat_input.data["targetAngle"], json!(1.25));
+    assert_eq!(flat_input.data["isBoosting"], json!(true));
+
+    let join_req: randseed_game_sdk::PlayerEventRequest = serde_json::from_value(json!({
+        "player": { "id": "p-join", "name": "Bob" },
+        "state": { "ok": true }
+    }))
+    .unwrap();
+    assert_eq!(join_req.resolved_player_id(), Some("p-join".to_string()));
+
+    let summary = MatchSummary {
+        winner_player_id: Some("p1".to_string()),
+        scores: None,
+        duration_seconds: 180.0,
+        custom_metrics: None,
+        extra: Some(json!({ "leaderboard": [{ "id": "p1", "rank": 1 }] })),
+    };
+    let summary_json = serde_json::to_value(&summary).unwrap();
+    assert_eq!(summary_json["leaderboard"][0]["id"], "p1");
+}
