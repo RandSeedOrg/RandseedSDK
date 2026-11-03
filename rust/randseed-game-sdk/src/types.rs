@@ -1090,6 +1090,9 @@ pub struct InitResult {
     /// Optional messages to broadcast when the match starts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
+    /// Whether this active room currently accepts additional players via matchmaking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by initialization.
     #[serde(
         rename = "resultUnits",
@@ -1110,6 +1113,9 @@ pub struct TickResult {
     pub broadcasts: Option<Vec<serde_json::Value>>,
     /// Whether the room host should persist a state snapshot.
     pub persist: bool,
+    /// Optional updated matchmaking joinability flag for this room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by this tick.
     #[serde(
         rename = "resultUnits",
@@ -1135,6 +1141,9 @@ pub struct PlayerEventResult {
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
+    /// Optional updated matchmaking joinability flag for this room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by this player event.
     #[serde(
         rename = "resultUnits",
@@ -1234,6 +1243,9 @@ pub struct CommandResult {
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
+    /// Optional updated matchmaking joinability flag for this room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by this trusted command.
     #[serde(
         rename = "resultUnits",

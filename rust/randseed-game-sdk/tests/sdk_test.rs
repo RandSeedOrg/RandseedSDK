@@ -315,6 +315,7 @@ impl GameServer for MockGame {
                 "type": "game_initialized",
                 "matchId": config.match_id,
             })]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -344,6 +345,7 @@ impl GameServer for MockGame {
             state,
             broadcasts,
             persist: is_persist,
+            joinable: None,
             result_units: None,
             action_results: None,
         })
@@ -363,6 +365,7 @@ impl GameServer for MockGame {
             broadcasts: Some(vec![
                 json!({ "type": "player_joined", "playerId": player_id }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -380,6 +383,7 @@ impl GameServer for MockGame {
             broadcasts: Some(vec![
                 json!({ "type": "player_left", "playerId": player_id }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -449,6 +453,7 @@ impl GameServer for MockGame {
             return Ok(CommandResult {
                 state,
                 broadcasts: Some(vec![json!({ "type": "counter.reset" })]),
+                joinable: None,
                 result_units: Some(result_units),
             });
         }
@@ -459,6 +464,7 @@ impl GameServer for MockGame {
             broadcasts: Some(vec![
                 json!({ "type": "command_executed", "cmdType": cmd.command_type }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -1356,4 +1362,24 @@ fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
     };
     let summary_json = serde_json::to_value(&summary).unwrap();
     assert_eq!(summary_json["leaderboard"][0]["id"], "p1");
+
+    let joinable_init = InitResult {
+        state: json!({ "phase": "matching" }),
+        broadcasts: None,
+        joinable: Some(true),
+        result_units: None,
+    };
+    let joinable_json = serde_json::to_value(&joinable_init).unwrap();
+    assert_eq!(joinable_json["joinable"], json!(true));
+    let decoded_init: InitResult = serde_json::from_value(joinable_json).unwrap();
+    assert_eq!(decoded_init.joinable, Some(true));
+
+    let closed_tick = TickResult {
+        state: json!({ "phase": "playing" }),
+        broadcasts: None,
+        persist: false,
+        joinable: Some(false),
+        result_units: None,
+    };
+    assert_eq!(serde_json::to_value(&closed_tick).unwrap()["joinable"], json!(false));
 }
