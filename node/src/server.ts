@@ -178,6 +178,17 @@ function validateStateResult(value: unknown): void {
     throw new Error("Game callback result must contain state.");
   }
   validateJsonValue(value);
+  if (Object.hasOwn(value, "playerViews") && value.playerViews !== undefined) {
+    if (!isRecord(value.playerViews)) {
+      throw new Error("playerViews must be an object keyed by playerId when provided.");
+    }
+    for (const [playerId, view] of Object.entries(value.playerViews)) {
+      if (playerId.trim().length === 0) {
+        throw new Error("playerViews keys must be non-empty playerId strings.");
+      }
+      validateJsonValue(view);
+    }
+  }
   if (Object.hasOwn(value, "broadcasts")) {
     if (!Array.isArray(value.broadcasts)) {
       throw new Error("broadcasts must be an array when provided.");

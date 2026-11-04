@@ -311,6 +311,7 @@ impl GameServer for MockGame {
                 "players": config.players,
                 "carryover": config.carryover,
             }),
+            player_views: None,
             broadcasts: Some(vec![json!({
                 "type": "game_initialized",
                 "matchId": config.match_id,
@@ -343,6 +344,7 @@ impl GameServer for MockGame {
 
         Ok(TickResult {
             state,
+            player_views: None,
             broadcasts,
             persist: is_persist,
             joinable: None,
@@ -362,6 +364,7 @@ impl GameServer for MockGame {
         }
         Ok(PlayerEventResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "player_joined", "playerId": player_id }),
             ]),
@@ -380,6 +383,7 @@ impl GameServer for MockGame {
         }
         Ok(PlayerEventResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "player_left", "playerId": player_id }),
             ]),
@@ -452,6 +456,7 @@ impl GameServer for MockGame {
                 serde_json::from_value(fixture["commandResponse"]["resultUnits"].clone()).unwrap();
             return Ok(CommandResult {
                 state,
+                player_views: None,
                 broadcasts: Some(vec![json!({ "type": "counter.reset" })]),
                 joinable: None,
                 result_units: Some(result_units),
@@ -461,6 +466,7 @@ impl GameServer for MockGame {
         state["lastCommand"] = json!(cmd);
         Ok(CommandResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "command_executed", "cmdType": cmd.command_type }),
             ]),
@@ -1365,21 +1371,35 @@ fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
 
     let joinable_init = InitResult {
         state: json!({ "phase": "matching" }),
+        player_views: Some(HashMap::from([
+            ("p1".to_string(), json!({ "phase": "matching", "viewer": "p1" })),
+        ])),
         broadcasts: None,
         joinable: Some(true),
         result_units: None,
     };
     let joinable_json = serde_json::to_value(&joinable_init).unwrap();
     assert_eq!(joinable_json["joinable"], json!(true));
+    assert_eq!(joinable_json["playerViews"]["p1"]["viewer"], json!("p1"));
     let decoded_init: InitResult = serde_json::from_value(joinable_json).unwrap();
     assert_eq!(decoded_init.joinable, Some(true));
+    assert_eq!(
+        decoded_init
+            .player_views
+            .as_ref()
+            .and_then(|views| views.get("p1")),
+        Some(&json!({ "phase": "matching", "viewer": "p1" }))
+    );
 
     let closed_tick = TickResult {
         state: json!({ "phase": "playing" }),
+        player_views: None,
         broadcasts: None,
         persist: false,
         joinable: Some(false),
         result_units: None,
     };
-    assert_eq!(serde_json::to_value(&closed_tick).unwrap()["joinable"], json!(false));
+    let closed_tick_json = serde_json::to_value(&closed_tick).unwrap();
+    assert_eq!(closed_tick_json["joinable"], json!(false));
+    assert!(closed_tick_json.get("playerViews").is_none());
 }

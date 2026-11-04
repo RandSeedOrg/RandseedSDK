@@ -132,21 +132,27 @@ export interface TickContext<TInput = unknown, TCommand = unknown> {
 
 export interface InitResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
 }
 
 export interface TickResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
   persist: boolean;
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
   actionResults?: GameActionResult[];
 }
 
 export interface PlayerEventResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
 }
 
@@ -175,7 +181,9 @@ export interface GameResult {
 
 export interface CommandResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
 }
 

@@ -1087,6 +1087,9 @@ impl TickContext {
 pub struct InitResult {
     /// Initial game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(rename = "playerViews", default, skip_serializing_if = "Option::is_none")]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast when the match starts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
@@ -1108,6 +1111,9 @@ pub struct InitResult {
 pub struct TickResult {
     /// Updated game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(rename = "playerViews", default, skip_serializing_if = "Option::is_none")]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
@@ -1138,6 +1144,9 @@ pub struct TickResult {
 pub struct PlayerEventResult {
     /// Updated game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(rename = "playerViews", default, skip_serializing_if = "Option::is_none")]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
@@ -1240,6 +1249,9 @@ pub struct GameResult {
 pub struct CommandResult {
     /// Updated game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(rename = "playerViews", default, skip_serializing_if = "Option::is_none")]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,

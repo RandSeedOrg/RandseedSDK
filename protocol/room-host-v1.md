@@ -202,9 +202,13 @@ Response:
 }
 ```
 
-The `state` property is required. `broadcasts` and `resultUnits` are optional.
-Any transition may emit zero or more completed units: `/init`, `/tick`,
-`/onPlayerJoin`, `/onPlayerLeave`, `/isGameOver`, and `/onCommand`.
+The `state` property is required. `playerViews`, `broadcasts`, `joinable`, and
+`resultUnits` are optional. When `playerViews` is provided as an object keyed by
+`playerId`, the room host retains `state` as the authoritative simulation state
+and delivers `playerViews[playerId]` (falling back to `state` when a key is
+absent) to each connected player's live snapshot channel. Any transition may
+emit zero or more completed units: `/init`, `/tick`, `/onPlayerJoin`,
+`/onPlayerLeave`, `/isGameOver`, and `/onCommand`.
 
 ### Tick
 
