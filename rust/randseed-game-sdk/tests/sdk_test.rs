@@ -1339,7 +1339,10 @@ fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
     let config: MatchConfig = serde_json::from_value(config_json).unwrap();
     config.validate().unwrap();
     assert_eq!(config.players, vec!["p1".to_string(), "p2".to_string()]);
-    assert_eq!(config.options.extra.get("customMode"), Some(&json!("arena")));
+    assert_eq!(
+        config.options.extra.get("customMode"),
+        Some(&json!("arena"))
+    );
     assert!(config.options.extra.get("playerObjects").is_some());
 
     let flat_input: randseed_game_sdk::TickInput = serde_json::from_value(json!({
@@ -1371,9 +1374,10 @@ fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
 
     let joinable_init = InitResult {
         state: json!({ "phase": "matching" }),
-        player_views: Some(HashMap::from([
-            ("p1".to_string(), json!({ "phase": "matching", "viewer": "p1" })),
-        ])),
+        player_views: Some(HashMap::from([(
+            "p1".to_string(),
+            json!({ "phase": "matching", "viewer": "p1" }),
+        )])),
         broadcasts: None,
         joinable: Some(true),
         result_units: None,

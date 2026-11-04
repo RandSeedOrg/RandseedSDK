@@ -187,12 +187,15 @@ export interface CommandResult<TState = unknown> {
   resultUnits?: GameResultEvent[];
 }
 
+export type StreamDurability = "checkpoint" | "strict";
+
 export interface GameServer<TState = unknown, TInput = unknown, TCommand = unknown> {
   agentCapabilities?(): Promise<AgentGameCapabilities | null> | AgentGameCapabilities | null;
   agentPlayerContract?(): Promise<AgentPlayerContract | null> | AgentPlayerContract | null;
   projectAgentPlayerView?(
     request: AgentPlayerViewRequest,
   ): Promise<AgentPlayerViewProjection> | AgentPlayerViewProjection;
+  durability?: StreamDurability | (() => StreamDurability | undefined);
   manifest(): Promise<GameManifest> | GameManifest;
   init(config: MatchConfig): Promise<InitResult<TState>> | InitResult<TState>;
   tick(
