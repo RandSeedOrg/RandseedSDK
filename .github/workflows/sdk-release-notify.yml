@@ -1,0 +1,115 @@
+name: Notify RandSeed Gamecreator about Rust SDK releases
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  notify-gamecreator:
+    if: github.event.release.prerelease == false && github.event.release.draft == false
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - api_url: https://devcreator.randseed.org
+            audience: randseed-gamecreator
+          - api_url: https://testcreator.randseed.org
+            audience: randseed-gamecreator-test
+          - api_url: https://creator.randseed.org
+            audience: randseed-gamecreator-production
+    steps:
+      - name: Check out the published SDK tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Validate the published crate version
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+
+          const manifest = readFileSync('rust/randseed-game-sdk/Cargo.toml', 'utf8');
+          const packageSection = manifest.split(/^\[/m).find(section => section.startsWith('package]'));
+          const version = packageSection?.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
+          const tag = process.env.RELEASE_TAG;
+          if (!version || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+            console.error('The Rust SDK manifest does not contain a stable release version.');
+            process.exit(1);
+          }
+          if (tag !== version && tag !== `v${version}`) {
+            console.error('The published GitHub Release tag does not match the crate version.');
+            process.exit(1);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          NODE
+
+      - name: Notify Gamecreator with GitHub Actions OIDC
+        env:
+          API_URL: ${{ matrix.target.api_url }}
+          OIDC_AUDIENCE: ${{ matrix.target.audience }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SDK_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+          const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+          const audience = process.env.OIDC_AUDIENCE;
+          const apiUrl = process.env.API_URL;
+          if (!requestUrl || !requestToken || !audience || !apiUrl) {
+            console.error('GitHub Actions OIDC configuration is missing.');
+            process.exit(1);
+          }
+
+          const tokenUrl = new URL(requestUrl);
+          tokenUrl.searchParams.set('audience', audience);
+          const tokenResponse = await fetch(tokenUrl, {
+            headers: { Authorization: `bearer ${requestToken}`, Accept: 'application/json' },
+          });
+          if (!tokenResponse.ok) {
+            console.error(`GitHub Actions OIDC token request failed (${tokenResponse.status}).`);
+            process.exit(1);
+          }
+          const tokenPayload = await tokenResponse.json();
+          if (typeof tokenPayload.value !== 'string' || tokenPayload.value.length === 0) {
+            console.error('GitHub Actions OIDC token response is invalid.');
+            process.exit(1);
+          }
+
+          const releaseId = Number(process.env.RELEASE_ID);
+          if (!Number.isSafeInteger(releaseId) || releaseId <= 0) {
+            console.error('GitHub Release ID is invalid.');
+            process.exit(1);
+          }
+          const body = {
+            repository: { full_name: 'RandSeedOrg/RandseedSDK' },
+            release: {
+              id: releaseId,
+              tag_name: process.env.RELEASE_TAG,
+              draft: false,
+              prerelease: false,
+            },
+            version: process.env.SDK_VERSION,
+          };
+          const response = await fetch(`${apiUrl}/api/webhooks/sdk/randseedsdk`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${tokenPayload.value}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          });
+          if (!response.ok) {
+            console.error(`Gamecreator release notification failed (${response.status}).`);
+            process.exit(1);
+          }
+          NODE
