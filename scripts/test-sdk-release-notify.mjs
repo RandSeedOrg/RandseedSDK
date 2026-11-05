@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { requestWithRetry } from "./notify-gamecreator-release.mjs";
+
+test("the workflow entry point executes when called directly", () => {
+  const scriptPath = fileURLToPath(new URL("./notify-gamecreator-release.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [scriptPath], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /GitHub Actions OIDC configuration is missing/);
+});
 
 test("retries transient server failures with bounded exponential backoff", async () => {
   const delays = [];

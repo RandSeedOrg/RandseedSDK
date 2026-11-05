@@ -1,3 +1,6 @@
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
 const MAX_ATTEMPTS = 5;
 const MAX_RETRY_AFTER_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15 * 1000;
@@ -135,7 +138,7 @@ async function main() {
   await response.body?.cancel();
 }
 
-if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch(error => {
     console.error(error instanceof Error ? error.message : "SDK release notification failed.");
     process.exitCode = 1;
