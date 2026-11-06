@@ -856,11 +856,12 @@ impl GameActionResult {
     /// Validate the stable action identifier and optional machine-readable code.
     pub fn validate(&self) -> Result<(), SdkError> {
         if !valid_key(&self.action_id)
-            || self.code.as_ref().is_some_and(|code| !valid_action_code(code))
+            || self
+                .code
+                .as_ref()
+                .is_some_and(|code| !valid_action_code(code))
         {
-            return Err(SdkError::Validation(
-                "Invalid game action result.".into(),
-            ));
+            return Err(SdkError::Validation("Invalid game action result.".into()));
         }
         Ok(())
     }

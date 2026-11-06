@@ -448,7 +448,10 @@ impl AgentActionReceipt {
             || self.controller_epoch > MAX_SAFE_INTEGER
             || self.expected_tick > MAX_SAFE_INTEGER
             || !terminal_tick_valid
-            || self.code.as_ref().is_some_and(|code| !valid_action_code(code))
+            || self
+                .code
+                .as_ref()
+                .is_some_and(|code| !valid_action_code(code))
         {
             return Err(SdkError::Validation("Invalid Agent action receipt.".into()));
         }

@@ -381,9 +381,7 @@ async fn handle_tick<G: GameServer>(
         Ok(res) if !action_results_are_valid(res.action_results.as_deref()) => {
             invalid_action_results_response()
         }
-        Ok(res) => {
-            (StatusCode::OK, Json(res)).into_response()
-        }
+        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
