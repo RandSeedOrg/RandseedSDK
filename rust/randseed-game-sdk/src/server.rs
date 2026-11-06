@@ -3,6 +3,10 @@
 //! Builds a container-side HTTP service with Axum and Tokio.
 
 use crate::agent_capabilities::AgentGameCapabilities;
+use crate::agent_player_view::{
+    create_agent_player_view, AgentPlayerContract, AgentPlayerViewProjection,
+    AgentPlayerViewRequest,
+};
 use crate::errors::SdkError;
 use crate::types::{
     validate_game_result_units, CommandRequest, CommandResult, GameCommand, GameManifest,
@@ -35,6 +39,21 @@ pub trait GameServer: Send + Sync + 'static {
     /// Explicit Agent support; games without a declaration are not opted in.
     async fn agent_capabilities(&self) -> Result<Option<AgentGameCapabilities>, SdkError> {
         Ok(None)
+    }
+
+    /// Declare the authoritative per-seat Agent view and action contract.
+    async fn agent_player_contract(&self) -> Result<Option<AgentPlayerContract>, SdkError> {
+        Ok(None)
+    }
+
+    /// Project a recipient-safe view from canonical state and committed events.
+    async fn project_agent_player_view(
+        &self,
+        _request: AgentPlayerViewRequest,
+    ) -> Result<AgentPlayerViewProjection, SdkError> {
+        Err(SdkError::NotImplemented(
+            "Agent player projection is not implemented.".into(),
+        ))
     }
 
     /// Return game metadata for `GET /manifest`.
@@ -219,6 +238,96 @@ async fn handle_agent_capabilities<G: GameServer>(
     }
 }
 
+async fn handle_agent_player_contract<G: GameServer>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match call_game(state.game.agent_player_contract()).await {
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Authoritative Agent player views are not enabled for this game.".into(),
+            }),
+        )
+            .into_response(),
+        Ok(Some(contract)) if contract.validate().is_ok() => {
+            (StatusCode::OK, Json(contract)).into_response()
+        }
+        _ => {
+            tracing::error!("Agent player contract failed validation or execution.");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Agent player contract is unavailable.".into(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn handle_agent_player_view<G: GameServer>(
+    State(state): State<Arc<AppState<G>>>,
+    ProtocolJson(request): ProtocolJson<AgentPlayerViewRequest>,
+) -> impl IntoResponse {
+    if request.validate().is_err() || request.context.scope.game_id != state.game_id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid Agent player view request.".into(),
+            }),
+        )
+            .into_response();
+    }
+    let contract = match call_game(state.game.agent_player_contract()).await {
+        Ok(Some(contract)) if contract.validate().is_ok() => contract,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Authoritative Agent player views are not enabled for this game.".into(),
+                }),
+            )
+                .into_response();
+        }
+        _ => {
+            tracing::error!("Agent player contract failed validation or execution.");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Agent player contract is unavailable.".into(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    let projection = match call_game(state.game.project_agent_player_view(request.clone())).await {
+        Ok(projection) => projection,
+        Err(_) => {
+            tracing::error!("Agent player projection failed.");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Agent player view is unavailable.".into(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    match create_agent_player_view(&contract, &request, projection) {
+        Ok(view) => (StatusCode::OK, Json(view)).into_response(),
+        Err(_) => {
+            tracing::error!("Agent player projection failed validation.");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Agent player view is unavailable.".into(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
 async fn handle_init<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
     ProtocolJson(config): ProtocolJson<MatchConfig>,
@@ -362,6 +471,11 @@ pub fn create_game_router<G: GameServer>(game: Arc<G>, game_id: Option<String>) 
     Router::new()
         .route("/manifest", get(handle_manifest::<G>))
         .route("/agent/capabilities", get(handle_agent_capabilities::<G>))
+        .route(
+            "/agent/player-contract",
+            get(handle_agent_player_contract::<G>),
+        )
+        .route("/agent/player-view", post(handle_agent_player_view::<G>))
         .route("/health", get(handle_health::<G>))
         .route("/init", post(handle_init::<G>))
         .route("/tick", post(handle_tick::<G>))

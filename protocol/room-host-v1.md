@@ -17,12 +17,18 @@ the browser `RoomClient`, not call these endpoints directly.
 | `POST` | `/onPlayerLeave` | `PlayerEventRequest` | `PlayerEventResult` |
 | `POST` | `/isGameOver` | `IsGameOverRequest` | `GameResult` |
 | `POST` | `/onCommand` | `CommandRequest` | `CommandResult` |
+| `GET` | `/agent/player-contract` | None | Optional `AgentPlayerContract` |
+| `POST` | `/agent/player-view` | Trusted host `AgentPlayerViewRequest` | Recipient-only `AgentPlayerView` |
 
 The server listens on port `8080` by default. Request validation errors return
 HTTP `400` with `{ "error": "..." }`. Unhandled game or server errors return
 HTTP `500` with a sanitized `{ "error": "..." }` response; never return stack
 traces, credentials, or internal platform data. Each request body is limited
 to 1 MiB; oversized bodies return HTTP `413`.
+
+The Agent player endpoints are host-to-container protocol operations. A browser
+must use the Player/Room gateway and must never submit canonical state or choose
+the recipient seat directly.
 
 ## Data contracts
 
@@ -98,6 +104,75 @@ number between 1 and 60; fractional rates are valid and `null` is not valid.
 `options` may be omitted; when present it must be an object, not `null`.
 `options.seed`, when present, is a finite JSON number. Other `options` entries are game-owned
 JSON configuration. `carryover` is opaque JSON and may be any JSON value.
+
+### Agent player protocol v1
+
+The canonical cross-language vectors are in
+[`agent-player-v1.json`](./fixtures/agent-player-v1.json). SDKs must preserve
+the wire casing, reject an invalid roster or recipient, and fail closed when a
+view is missing or larger than 6,000 UTF-8 bytes.
+
+`GET /agent/player-contract` returns `404` when authoritative per-seat views
+are not implemented. A valid contract declares:
+
+```json
+{
+  "playerViewProtocolVersion": 1,
+  "actionProtocolVersion": 1,
+  "playerViewSchemaId": "hidden-hand.view.v1",
+  "actionSchemaId": "hidden-hand.action.v1",
+  "modes": ["follow", "autoplay"],
+  "maxDecisionHz": 5,
+  "independentSeats": true,
+  "backgroundAutoplay": false
+}
+```
+
+Decision frequency is finite, positive, and capped at 10 Hz. Background
+Autoplay requires both `autoplay` mode and independent-seat support. A contract
+declaration is not a privacy proof, authorization, or release approval.
+
+The Room host constructs `AgentPlayerViewRequest` from the exact committed
+state, scope, roster, seat identity, tick, sequence, and committed events. It
+calls `/agent/player-view`; the game server projects that canonical input into:
+
+```json
+{
+  "protocolVersion": 1,
+  "scope": {
+    "gameId": "hidden-hand",
+    "environment": "dev",
+    "releaseVersion": "release-1"
+  },
+  "roomId": "room-1",
+  "matchId": "match-1",
+  "matchSeq": 1,
+  "playerId": "seat-a",
+  "sequence": 7,
+  "tick": 12,
+  "schemaId": "hidden-hand.view.v1",
+  "publicState": { "round": 2, "turn": "seat-a" },
+  "self": { "playerId": "seat-a", "privateState": { "hand": ["A_SECRET"] } },
+  "visibleEvents": [{ "type": "turn_started", "playerId": "seat-a" }],
+  "decision": { "canAct": true, "deadlineAt": 1793810400000 }
+}
+```
+
+The game callback is responsible for filtering opponent-private state, events,
+random state, initialization secrets, and any other non-recipient data. The SDK
+copies and bounds the result but cannot infer whether a publisher classified
+game data correctly. The platform must send each view only to the authenticated
+recipient selected by the Room host; it must not fall back to canonical state.
+
+An Agent action binds an action ID to scope, room, match, player seat, controller
+lease epoch, source observation sequence, expected tick, action schema, and JSON
+payload. Retries with the same ID and identical payload are idempotent; reuse
+with a different payload is a conflict. Receipts distinguish `queued`,
+`applied`, `rejected`, and `unresolved`. A newer tick is not proof that a
+specific action was applied. A Skill decision is either `{ "kind": "act",
+"action": ..., "memory": ... }` or `{ "kind": "wait", "resumeAt": null,
+"memory": ... }`; `wait` does not submit a game action and must use bounded
+scheduling.
 
 ### Initialization
 

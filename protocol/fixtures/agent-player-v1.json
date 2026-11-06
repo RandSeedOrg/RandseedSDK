@@ -1,0 +1,132 @@
+{
+  "protocolVersion": 1,
+  "contract": {
+    "playerViewProtocolVersion": 1,
+    "actionProtocolVersion": 1,
+    "playerViewSchemaId": "hidden-hand.view.v1",
+    "actionSchemaId": "hidden-hand.action.v1",
+    "modes": ["follow", "autoplay"],
+    "maxDecisionHz": 5.0,
+    "independentSeats": true,
+    "backgroundAutoplay": false
+  },
+  "request": {
+    "context": {
+      "scope": {
+        "gameId": "hidden-hand",
+        "environment": "dev",
+        "releaseVersion": "release-1"
+      },
+      "roomId": "room-1",
+      "matchId": "match-1",
+      "matchSeq": 1,
+      "playerId": "seat-a",
+      "sequence": 7,
+      "tick": 12
+    },
+    "players": ["seat-a", "seat-b"],
+    "state": {
+      "round": 2,
+      "turn": "seat-a",
+      "privateByPlayer": {
+        "seat-a": { "hand": ["A_SECRET"] },
+        "seat-b": { "hand": ["B_SECRET"] }
+      },
+      "randomSeed": 9001
+    },
+    "committedEvents": [
+      { "type": "turn_started", "playerId": "seat-a" },
+      { "type": "private_draw", "playerId": "seat-b", "card": "B_SECRET" }
+    ]
+  },
+  "projection": {
+    "publicState": { "round": 2, "turn": "seat-a" },
+    "privateState": { "hand": ["A_SECRET"] },
+    "visibleEvents": [{ "type": "turn_started", "playerId": "seat-a" }],
+    "decision": { "canAct": true, "deadlineAt": 1793810400000 }
+  },
+  "view": {
+    "protocolVersion": 1,
+    "scope": {
+      "gameId": "hidden-hand",
+      "environment": "dev",
+      "releaseVersion": "release-1"
+    },
+    "roomId": "room-1",
+    "matchId": "match-1",
+    "matchSeq": 1,
+    "playerId": "seat-a",
+    "sequence": 7,
+    "tick": 12,
+    "schemaId": "hidden-hand.view.v1",
+    "publicState": { "round": 2, "turn": "seat-a" },
+    "self": { "playerId": "seat-a", "privateState": { "hand": ["A_SECRET"] } },
+    "visibleEvents": [{ "type": "turn_started", "playerId": "seat-a" }],
+    "decision": { "canAct": true, "deadlineAt": 1793810400000 }
+  },
+  "lease": {
+    "roomId": "room-1",
+    "matchId": "match-1",
+    "playerId": "seat-a",
+    "controller": { "type": "agent", "runId": "run-1" },
+    "epoch": 2,
+    "expiresAt": 1793810460000
+  },
+  "actionRequest": {
+    "protocolVersion": 1,
+    "scope": {
+      "gameId": "hidden-hand",
+      "environment": "dev",
+      "releaseVersion": "release-1"
+    },
+    "roomId": "room-1",
+    "matchId": "match-1",
+    "matchSeq": 1,
+    "playerId": "seat-a",
+    "actionId": "action-1",
+    "controller": { "type": "agent", "runId": "run-1" },
+    "controllerEpoch": 2,
+    "observationSequence": 7,
+    "expectedTick": 12,
+    "actionSchemaId": "hidden-hand.action.v1",
+    "action": { "type": "play", "index": 0 }
+  },
+  "queuedReceipt": {
+    "protocolVersion": 1,
+    "actionId": "action-1",
+    "roomId": "room-1",
+    "matchId": "match-1",
+    "playerId": "seat-a",
+    "controllerEpoch": 2,
+    "expectedTick": 12,
+    "status": "queued"
+  },
+  "appliedReceipt": {
+    "protocolVersion": 1,
+    "actionId": "action-1",
+    "roomId": "room-1",
+    "matchId": "match-1",
+    "playerId": "seat-a",
+    "controllerEpoch": 2,
+    "expectedTick": 12,
+    "status": "applied",
+    "committedTick": 13
+  },
+  "rejectedReceipt": {
+    "protocolVersion": 1,
+    "actionId": "action-1",
+    "roomId": "room-1",
+    "matchId": "match-1",
+    "playerId": "seat-a",
+    "controllerEpoch": 2,
+    "expectedTick": 12,
+    "status": "rejected",
+    "committedTick": 13,
+    "code": "OUT_OF_TURN"
+  },
+  "waitDecision": {
+    "kind": "wait",
+    "resumeAt": null,
+    "memory": { "lastSequence": 7 }
+  }
+}

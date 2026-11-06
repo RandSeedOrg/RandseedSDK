@@ -1,4 +1,9 @@
 import type { AgentGameCapabilities } from "./agent-capabilities.js";
+import type {
+  AgentPlayerContract,
+  AgentPlayerViewProjection,
+  AgentPlayerViewRequest,
+} from "./agent-player-view.js";
 
 export type JsonValue =
   | null
@@ -99,6 +104,16 @@ export interface TickInput<TData = unknown> {
   playerId: string;
   data: TData;
   timestamp?: number;
+  actionId?: string;
+  actionSchemaId?: string;
+}
+
+export type GameActionOutcome = "applied" | "rejected";
+
+export interface GameActionResult {
+  actionId: string;
+  status: GameActionOutcome;
+  code?: string;
 }
 
 export interface GameCommand<TData = unknown> {
@@ -126,6 +141,7 @@ export interface TickResult<TState = unknown> {
   broadcasts?: unknown[];
   persist: boolean;
   resultUnits?: GameResultEvent[];
+  actionResults?: GameActionResult[];
 }
 
 export interface PlayerEventResult<TState = unknown> {
@@ -165,6 +181,10 @@ export interface CommandResult<TState = unknown> {
 
 export interface GameServer<TState = unknown, TInput = unknown, TCommand = unknown> {
   agentCapabilities?(): Promise<AgentGameCapabilities | null> | AgentGameCapabilities | null;
+  agentPlayerContract?(): Promise<AgentPlayerContract | null> | AgentPlayerContract | null;
+  projectAgentPlayerView?(
+    request: AgentPlayerViewRequest,
+  ): Promise<AgentPlayerViewProjection> | AgentPlayerViewProjection;
   manifest(): Promise<GameManifest> | GameManifest;
   init(config: MatchConfig): Promise<InitResult<TState>> | InitResult<TState>;
   tick(
