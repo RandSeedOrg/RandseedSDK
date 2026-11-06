@@ -113,6 +113,10 @@ project's `package.json`, or use an `.mjs` entry point.
   random number generation.
 - Replay helpers validate, execute, and prepare replay data for storage tiers.
 - Agent capability and player-specific observation helpers are opt-in.
+- Authoritative Agent player-view contracts and host-only projection endpoints
+  are available in the SDK source. The Gamecreator Worker connects them to
+  per-seat HTTP/WebSocket snapshots in source; action receipts and Skill
+  dispatch remain incomplete platform work.
 
 See the [protocol contract](../protocol/room-host-v1.md) and shared
 [compatibility fixture](../protocol/fixtures/room-host-v1.json) for the exact

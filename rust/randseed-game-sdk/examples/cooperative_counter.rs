@@ -132,6 +132,7 @@ impl GameServer for CooperativeCounter {
             broadcasts,
             persist: !result_units.is_empty(),
             result_units: (!result_units.is_empty()).then_some(result_units),
+            action_results: None,
         })
     }
 

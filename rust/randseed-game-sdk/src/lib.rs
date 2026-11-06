@@ -7,6 +7,7 @@
 
 pub mod agent_capabilities;
 pub mod agent_observation;
+pub mod agent_player_view;
 pub mod errors;
 pub mod platform;
 pub mod prng;
@@ -19,6 +20,14 @@ pub use agent_capabilities::{AgentControlMode, AgentGameCapabilities};
 pub use agent_observation::{
     create_agent_observation, AgentObservation, AgentObservationContext, AgentObservationSelf,
 };
+pub use agent_player_view::{
+    create_agent_player_view, AgentActionReceipt, AgentActionReceiptStatus, AgentActionRequest,
+    AgentController, AgentControllerLease, AgentPlayerContract, AgentPlayerDecisionState,
+    AgentPlayerMode, AgentPlayerView, AgentPlayerViewContext, AgentPlayerViewProjection,
+    AgentPlayerViewRequest, AgentPlayerViewScope, AgentPlayerViewSelf, AgentSkillDecision,
+    MAX_AGENT_PLAYER_ACTION_BYTES, MAX_AGENT_PLAYER_MEMORY_BYTES, MAX_AGENT_PLAYER_REQUEST_BYTES,
+    MAX_AGENT_PLAYER_VIEW_BYTES,
+};
 pub use errors::SdkError;
 pub use platform::{PlatformClient, PlayerInfo};
 pub use prng::Mulberry32;
@@ -28,11 +37,11 @@ pub use replay::{
 };
 pub use server::{create_game_router, run_game_server, GameServer};
 pub use types::{
-    validate_game_result_units, CommandRequest, CommandResult, GameCommand, GameManifest,
-    GameMetricAggregation, GameMetricDefinition, GameResult, GameResultCorrection,
-    GameResultCorrectionAction, GameResultDefinition, GameResultEvent, GameResultParticipant,
-    GameResultTeam, HealthResponse, InitResult, IsGameOverRequest, MatchConfig, MatchOptions,
-    MatchSummary, NextMatchPolicy, PlayerEventRequest, PlayerEventResult, RatioMetricAggregation,
-    ResultMetricScope, ResultOutcome, SimpleMetricAggregation, TickContext, TickInput, TickRequest,
-    TickResult,
+    validate_game_result_units, CommandRequest, CommandResult, GameActionOutcome, GameActionResult,
+    GameCommand, GameManifest, GameMetricAggregation, GameMetricDefinition, GameResult,
+    GameResultCorrection, GameResultCorrectionAction, GameResultDefinition, GameResultEvent,
+    GameResultParticipant, GameResultTeam, HealthResponse, InitResult, IsGameOverRequest,
+    MatchConfig, MatchOptions, MatchSummary, NextMatchPolicy, PlayerEventRequest,
+    PlayerEventResult, RatioMetricAggregation, ResultMetricScope, ResultOutcome,
+    SimpleMetricAggregation, TickContext, TickInput, TickRequest, TickResult,
 };

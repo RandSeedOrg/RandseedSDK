@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./agent-observation.js";
 export * from "./agent-capabilities.js";
+export * from "./agent-player-view.js";
 export * from "./validators.js";
 export * from "./result-units.js";
 export * from "./prng.js";

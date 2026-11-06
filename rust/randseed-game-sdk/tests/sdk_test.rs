@@ -5,11 +5,12 @@
 use async_trait::async_trait;
 use randseed_game_sdk::{
     create_game_router, evaluate_replay_storage_tier, validate_game_result_units,
-    validate_replay_data_v2, AgentControlMode, AgentGameCapabilities, CommandResult, GameCommand,
-    GameManifest, GameResult, GameResultDefinition, GameResultEvent, GameServer, HealthResponse,
-    InitResult, MatchConfig, MatchOptions, MatchSummary, Mulberry32, NextMatchPolicy,
-    PlatformClient, PlayerEventResult, ReplayDataV2, ReplayInputItem, ReplayStorageTier, SdkError,
-    TickContext, TickResult,
+    validate_replay_data_v2, AgentControlMode, AgentGameCapabilities, AgentPlayerContract,
+    AgentPlayerViewProjection, AgentPlayerViewRequest, CommandResult, GameActionOutcome,
+    GameActionResult, GameCommand, GameManifest, GameResult, GameResultDefinition, GameResultEvent,
+    GameServer, HealthResponse, InitResult, MatchConfig, MatchOptions, MatchSummary, Mulberry32,
+    NextMatchPolicy, PlatformClient, PlayerEventResult, ReplayDataV2, ReplayInputItem,
+    ReplayStorageTier, SdkError, TickContext, TickInput, TickResult,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -170,6 +171,44 @@ fn protocol_v1_validation_rejects_out_of_range_values() {
 }
 
 #[test]
+fn tick_action_metadata_and_action_results_are_protocol_validated() {
+    let context = |action_id: Option<&str>, action_schema_id: Option<&str>| TickContext {
+        tick: 1,
+        inputs: vec![TickInput {
+            player_id: "seat-a".into(),
+            data: json!({}),
+            timestamp: None,
+            action_id: action_id.map(str::to_owned),
+            action_schema_id: action_schema_id.map(str::to_owned),
+        }],
+        commands: vec![],
+        elapsed_seconds: 0.1,
+    };
+    assert!(context(None, None).validate().is_ok());
+    assert!(context(Some("action-1"), Some("action.v1"))
+        .validate()
+        .is_ok());
+    assert!(context(Some("action-1"), None).validate().is_err());
+    assert!(context(Some(""), Some("action.v1")).validate().is_err());
+    assert!(context(Some("action-1"), Some("invalid schema"))
+        .validate()
+        .is_err());
+
+    let result = GameActionResult {
+        action_id: "action-1".into(),
+        status: GameActionOutcome::Applied,
+        code: Some("APPLIED".into()),
+    };
+    assert!(result.validate().is_ok());
+    let invalid = GameActionResult {
+        action_id: "action-1".into(),
+        status: GameActionOutcome::Rejected,
+        code: Some("invalid code".into()),
+    };
+    assert!(invalid.validate().is_err());
+}
+
+#[test]
 fn game_result_unit_v1_matches_the_shared_fixture() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/game-result-event-v1.json")).unwrap();
@@ -306,6 +345,7 @@ impl GameServer for MockGame {
             broadcasts,
             persist: is_persist,
             result_units: None,
+            action_results: None,
         })
     }
 
@@ -431,6 +471,21 @@ impl GameServer for AgentGame {
     async fn agent_capabilities(&self) -> Result<Option<AgentGameCapabilities>, SdkError> {
         Ok(Some(self.0.clone()))
     }
+    async fn agent_player_contract(&self) -> Result<Option<AgentPlayerContract>, SdkError> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/agent-player-v1.json")).unwrap();
+        Ok(Some(
+            serde_json::from_value(fixture["contract"].clone()).unwrap(),
+        ))
+    }
+    async fn project_agent_player_view(
+        &self,
+        _request: AgentPlayerViewRequest,
+    ) -> Result<AgentPlayerViewProjection, SdkError> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/agent-player-v1.json")).unwrap();
+        Ok(serde_json::from_value(fixture["projection"].clone()).unwrap())
+    }
     async fn manifest(&self) -> Result<GameManifest, SdkError> {
         MockGame.manifest().await
     }
@@ -461,6 +516,164 @@ impl GameServer for AgentGame {
     async fn is_game_over(&self, state: serde_json::Value) -> Result<GameResult, SdkError> {
         MockGame.is_game_over(state).await
     }
+}
+
+#[tokio::test]
+async fn agent_player_contract_and_projection_routes_validate_scope_and_view() {
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/agent-player-v1.json")).unwrap();
+    let capabilities = AgentGameCapabilities {
+        observation_protocol_version: 1,
+        action_protocol_version: 1,
+        modes: vec![AgentControlMode::Autoplay, AgentControlMode::Follow],
+        max_decision_hz: 5.0,
+        background_autoplay: false,
+    };
+    let router = || {
+        create_game_router(
+            Arc::new(AgentGame(capabilities.clone())),
+            Some("hidden-hand".into()),
+        )
+    };
+    let contract_response = router()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/player-contract")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(contract_response.status().as_u16(), 200);
+    let contract_body = contract_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&contract_body).unwrap(),
+        fixture["contract"]
+    );
+
+    let view_response = router()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/player-view")
+                .header("content-type", "application/json")
+                .body(Body::from(fixture["request"].to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view_response.status().as_u16(), 200);
+    let view_body = view_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let view: serde_json::Value = serde_json::from_slice(&view_body).unwrap();
+    assert_eq!(view, fixture["view"]);
+    assert!(!view.to_string().contains("B_SECRET"));
+    assert!(!view.to_string().contains("randomSeed"));
+
+    let mut invalid_request = fixture["request"].clone();
+    invalid_request["players"] = json!(["seat-b"]);
+    let invalid_response = router()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/player-view")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid_request.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_response.status().as_u16(), 400);
+
+    let legacy_response = create_game_router(Arc::new(MockGame), None)
+        .oneshot(
+            Request::builder()
+                .uri("/agent/player-contract")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy_response.status().as_u16(), 404);
+
+    let unconfigured_view_response =
+        create_game_router(Arc::new(AgentGame(capabilities.clone())), None)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/agent/player-view")
+                    .header("content-type", "application/json")
+                    .body(Body::from(fixture["request"].to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    assert_eq!(unconfigured_view_response.status().as_u16(), 200);
+
+    let health_response = create_game_router(Arc::new(MockGame), None)
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health_response.status().as_u16(), 200);
+    let health_body = health_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let health: HealthResponse = serde_json::from_slice(&health_body).unwrap();
+    assert_eq!(health.game_id, "randseed-game");
+
+    let unconfigured_view_response =
+        create_game_router(Arc::new(AgentGame(capabilities.clone())), None)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/agent/player-view")
+                    .header("content-type", "application/json")
+                    .body(Body::from(fixture["request"].to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    assert_eq!(unconfigured_view_response.status().as_u16(), 200);
+
+    let health_response = create_game_router(Arc::new(MockGame), None)
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health_response.status().as_u16(), 200);
+    let health_body = health_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let health: HealthResponse = serde_json::from_slice(&health_body).unwrap();
+    assert_eq!(health.game_id, "randseed-game");
 }
 
 #[tokio::test]

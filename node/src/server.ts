@@ -1,6 +1,22 @@
 import http from "node:http";
-import type { GameCommand, GameServer, JsonValue, MatchConfig, TickContext } from "./types.js";
+import type {
+  GameActionResult,
+  GameCommand,
+  GameServer,
+  JsonValue,
+  MatchConfig,
+  TickContext,
+} from "./types.js";
+import {
+  isValidActionCode,
+  isValidProtocolKey,
+} from "./protocol-identifiers.js";
 import { validateAgentGameCapabilities } from "./agent-capabilities.js";
+import {
+  createAgentPlayerView,
+  validateAgentPlayerContract,
+  validateAgentPlayerViewRequest,
+} from "./agent-player-view.js";
 import { validateGameResultUnits } from "./result-units.js";
 import {
   isRecord,
@@ -175,10 +191,24 @@ function validateTickResult(value: unknown): asserts value is {
   state: unknown;
   broadcasts?: unknown[];
   persist: boolean;
+  actionResults?: GameActionResult[];
 } {
   validateStateResult(value);
   if (!isRecord(value) || typeof value.persist !== "boolean") {
     throw new Error("TickResult.persist must be a boolean.");
+  }
+  if (Object.hasOwn(value, "actionResults")) {
+    if (!Array.isArray(value.actionResults)) {
+      throw new Error("TickResult.actionResults must be an array when provided.");
+    }
+    for (const result of value.actionResults) {
+      if (!isRecord(result)
+        || !isValidProtocolKey(result.actionId)
+        || (result.status !== "applied" && result.status !== "rejected")
+        || (Object.hasOwn(result, "code") && !isValidActionCode(result.code))) {
+        throw new Error("TickResult.actionResults contains an invalid result.");
+      }
+    }
   }
 }
 
@@ -266,6 +296,60 @@ export function createGameServer(
         } catch {
           console.error("[server-sdk] Agent capability declaration failed validation or execution.");
           sendJson(res, 500, { error: "Agent capabilities are unavailable." });
+        }
+        return;
+      }
+
+      if (method === "GET" && pathname === "/agent/player-contract") {
+        try {
+          if (!game.agentPlayerContract || !game.projectAgentPlayerView) {
+            sendJson(res, 404, { error: "Authoritative Agent player views are not enabled for this game." });
+            return;
+          }
+          const declaration = await game.agentPlayerContract();
+          if (declaration === null) {
+            sendJson(res, 404, { error: "Authoritative Agent player views are not enabled for this game." });
+            return;
+          }
+          const contract = validateAgentPlayerContract(declaration);
+          sendJson(res, 200, contract);
+        } catch {
+          console.error("[server-sdk] Agent player contract failed validation.");
+          sendJson(res, 500, { error: "Agent player contract is unavailable." });
+        }
+        return;
+      }
+
+      if (method === "POST" && pathname === "/agent/player-view") {
+        let playerRequest: ReturnType<typeof validateAgentPlayerViewRequest>;
+        try {
+          playerRequest = validateAgentPlayerViewRequest(await readJsonBody(req));
+        } catch (error) {
+          sendJson(res, error instanceof RequestError ? error.statusCode : 400, {
+            error: error instanceof Error ? error.message : "Invalid Agent player view request.",
+          });
+          return;
+        }
+        if (options.gameId && playerRequest.context.scope.gameId !== options.gameId) {
+          sendJson(res, 400, { error: "Agent player view game scope does not match this server." });
+          return;
+        }
+        try {
+          if (!game.agentPlayerContract || !game.projectAgentPlayerView) {
+            sendJson(res, 404, { error: "Authoritative Agent player views are not enabled for this game." });
+            return;
+          }
+          const declaration = await game.agentPlayerContract();
+          if (declaration === null) {
+            sendJson(res, 404, { error: "Authoritative Agent player views are not enabled for this game." });
+            return;
+          }
+          const contract = validateAgentPlayerContract(declaration);
+          const projection = await game.projectAgentPlayerView(structuredClone(playerRequest));
+          sendJson(res, 200, createAgentPlayerView(contract, playerRequest, projection));
+        } catch {
+          console.error("[server-sdk] Agent player projection failed validation or execution.");
+          sendJson(res, 500, { error: "Agent player view is unavailable." });
         }
         return;
       }

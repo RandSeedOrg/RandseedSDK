@@ -2,6 +2,7 @@
 //!
 //! Structs and serialization names follow the room-host wire protocol.
 
+use crate::agent_player_view::{valid_action_code, valid_key, valid_schema_id};
 use crate::errors::SdkError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -816,6 +817,54 @@ pub struct TickInput {
     /// Optional non-negative safe-integer client timestamp in epoch milliseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<u64>,
+    /// Optional idempotency ID for an action requiring an authoritative receipt.
+    #[serde(rename = "actionId", default, skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
+    /// Immutable action schema declared by the game release.
+    #[serde(
+        rename = "actionSchemaId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub action_schema_id: Option<String>,
+}
+
+/// Whether game logic committed or rejected a specific submitted action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GameActionOutcome {
+    /// The action was applied to the authoritative state.
+    Applied,
+    /// The action was explicitly rejected by game logic.
+    Rejected,
+}
+
+/// Game-authored result for one input carrying an action ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameActionResult {
+    /// Input action idempotency key.
+    pub action_id: String,
+    /// Authoritative outcome.
+    pub status: GameActionOutcome,
+    /// Optional sanitized machine-readable reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+impl GameActionResult {
+    /// Validate the stable action identifier and optional machine-readable code.
+    pub fn validate(&self) -> Result<(), SdkError> {
+        if !valid_key(&self.action_id)
+            || self
+                .code
+                .as_ref()
+                .is_some_and(|code| !valid_action_code(code))
+        {
+            return Err(SdkError::Validation("Invalid game action result.".into()));
+        }
+        Ok(())
+    }
 }
 
 /// A trusted command issued by the room host or an administrator.
@@ -877,6 +926,24 @@ impl TickContext {
                     "input.timestamp must be a non-negative safe integer.".into(),
                 ));
             }
+            if item.action_id.is_some() != item.action_schema_id.is_some() {
+                return Err(SdkError::Validation(
+                    "actionId and actionSchemaId must be supplied together.".into(),
+                ));
+            }
+            if item
+                .action_id
+                .as_deref()
+                .is_some_and(|action_id| !valid_key(action_id))
+                || item
+                    .action_schema_id
+                    .as_deref()
+                    .is_some_and(|schema_id| !valid_schema_id(schema_id))
+            {
+                return Err(SdkError::Validation(
+                    "input action identifiers are invalid.".into(),
+                ));
+            }
         }
         for command in &self.commands {
             if command
@@ -928,6 +995,13 @@ pub struct TickResult {
         skip_serializing_if = "Option::is_none"
     )]
     pub result_units: Option<Vec<GameResultEvent>>,
+    /// Explicit results for inputs carrying action IDs.
+    #[serde(
+        rename = "actionResults",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub action_results: Option<Vec<GameActionResult>>,
 }
 
 /// Result returned after a player lifecycle event.

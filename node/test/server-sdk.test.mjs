@@ -2,6 +2,7 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import {
@@ -186,6 +187,80 @@ describe("Node.js Server SDK", () => {
       assert.equal(data.state.score, 10);
       assert.equal(data.persist, true);
       assert.equal(data.broadcasts.length, 1);
+    });
+
+    test("TickContext requires paired, protocol-valid action identifiers", () => {
+      const context = actionId => ({
+        tick: 1,
+        inputs: [{
+          playerId: "player_a",
+          data: {},
+          ...(actionId === undefined ? {} : { actionId, actionSchemaId: "action.v1" }),
+        }],
+        elapsedSeconds: 1,
+      });
+      assert.doesNotThrow(() => validateTickContext(context("action-1")));
+      assert.throws(() => validateTickContext({
+        ...context("action-1"),
+        inputs: [{ playerId: "player_a", data: {}, actionId: "action-1" }],
+      }));
+      assert.throws(() => validateTickContext(context("")));
+      assert.throws(() => validateTickContext({
+        ...context("action-1"),
+        inputs: [{
+          playerId: "player_a",
+          data: {},
+          actionId: "action-1",
+          actionSchemaId: "invalid schema",
+        }],
+      }));
+      assert.throws(() => validateTickContext(context("界".repeat(86))));
+    });
+
+    test("POST /tick rejects malformed actionResults", async t => {
+      let actionResults = [];
+      const resultGame = {
+        ...mockGame,
+        tick(_ctx, state) {
+          return { state, persist: true, actionResults };
+        },
+      };
+      const resultServer = createGameServer(resultGame, 0, { gameId: "test-card-game" });
+      t.after(() => new Promise(resolve => resultServer.close(resolve)));
+      await once(resultServer, "listening");
+      const address = resultServer.address();
+      assert.ok(address && typeof address === "object");
+      const url = `http://127.0.0.1:${address.port}/tick`;
+      const payload = {
+        ctx: {
+          tick: 1,
+          inputs: [{
+            playerId: "player_a",
+            data: {},
+            actionId: "action-1",
+            actionSchemaId: "action.v1",
+          }],
+          elapsedSeconds: 1,
+        },
+        state: {},
+      };
+      const postTick = () => fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      actionResults = [{ actionId: "action-1", status: "applied", code: "APPLIED" }];
+      assert.equal((await postTick()).status, 200);
+      for (const invalid of [
+        "invalid",
+        [{ actionId: "action-1", status: "queued" }],
+        [{ actionId: "", status: "rejected" }],
+        [{ actionId: "action-1", status: "rejected", code: "not a code" }],
+      ]) {
+        actionResults = invalid;
+        assert.equal((await postTick()).status, 500);
+      }
     });
 
     test("POST /onPlayerJoin processes a joining player", async () => {

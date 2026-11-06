@@ -16,11 +16,21 @@ const rustResultEvent = readFileSync(
   new URL("rust/randseed-game-sdk/tests/fixtures/game-result-event-v1.json", root),
   "utf8",
 );
+const agentPlayer = readFileSync(new URL("protocol/fixtures/agent-player-v1.json", root), "utf8");
+const rustAgentPlayer = readFileSync(
+  new URL("rust/randseed-game-sdk/tests/fixtures/agent-player-v1.json", root),
+  "utf8",
+);
 
 assert.deepEqual(JSON.parse(rustCopy), JSON.parse(canonical), "Rust's packaged fixture must match the canonical fixture");
 assert.deepEqual(
   JSON.parse(rustResultEvent),
   JSON.parse(resultEvent),
   "Rust's Result Unit fixture must match the canonical fixture",
+);
+assert.deepEqual(
+  JSON.parse(rustAgentPlayer),
+  JSON.parse(agentPlayer),
+  "Rust's Agent player fixture must match the canonical fixture",
 );
 console.log("Shared room-host fixture copies match.");

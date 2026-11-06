@@ -29,6 +29,18 @@ randseed-game-sdk = { path = "../RandseedSDK/rust/randseed-game-sdk" }
 Adjust the path to match your checkout. The crate is not published to crates.io
 as part of this source preparation.
 
+## Authoritative Agent player views
+
+Implement `GameServer::agent_player_contract` and
+`GameServer::project_agent_player_view` to expose a versioned per-seat
+projection. The SDK provides host-to-container `GET /agent/player-contract` and
+`POST /agent/player-view`, shared action/receipt/lease types, and an explicit
+Skill `wait` decision. The projection endpoint is for the trusted Room host;
+it does not authorize a browser or prove that game-authored field visibility is
+correct. This crate provides the projection contract only; room authorization,
+per-seat delivery, action receipts, Skill dispatch, and release admission are
+platform responsibilities and are not implemented by the crate.
+
 ## Run the cooperative counter example
 
 The crate includes a complete `GameServer` implementation in
