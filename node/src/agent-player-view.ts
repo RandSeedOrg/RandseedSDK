@@ -1,12 +1,13 @@
+import {
+  isValidActionSchemaId,
+  isValidProtocolKey,
+} from "./protocol-identifiers.js";
+
 const safeInteger = (value: unknown, minimum: number): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
 
-const key = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.length <= 256
-  && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
-
-const schemaIdentifier = (value: unknown): value is string =>
-  typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+const key = isValidProtocolKey;
+const schemaIdentifier = isValidActionSchemaId;
 
 export type AgentPlayerMode = "follow" | "autoplay";
 

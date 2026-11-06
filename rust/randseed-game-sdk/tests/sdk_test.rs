@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use randseed_game_sdk::{
     create_game_router, evaluate_replay_storage_tier, validate_game_result_units,
     validate_replay_data_v2, AgentControlMode, AgentGameCapabilities, AgentPlayerContract,
-    AgentPlayerViewProjection, AgentPlayerViewRequest, CommandResult, GameCommand, GameManifest,
-    GameResult, GameResultDefinition, GameResultEvent, GameServer, HealthResponse, InitResult,
-    MatchConfig, MatchOptions, MatchSummary, Mulberry32, NextMatchPolicy, PlatformClient,
-    PlayerEventResult, ReplayDataV2, ReplayInputItem, ReplayStorageTier, SdkError, TickContext,
-    TickResult,
+    AgentPlayerViewProjection, AgentPlayerViewRequest, CommandResult, GameActionOutcome,
+    GameActionResult, GameCommand, GameManifest, GameResult, GameResultDefinition,
+    GameResultEvent, GameServer, HealthResponse, InitResult, MatchConfig, MatchOptions,
+    MatchSummary, Mulberry32, NextMatchPolicy, PlatformClient, PlayerEventResult, ReplayDataV2,
+    ReplayInputItem, ReplayStorageTier, SdkError, TickContext, TickInput, TickResult,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -168,6 +168,40 @@ fn protocol_v1_validation_rejects_out_of_range_values() {
     context.commands.clear();
     context.elapsed_seconds = f64::INFINITY;
     assert!(context.validate().is_err());
+}
+
+#[test]
+fn tick_action_metadata_and_action_results_are_protocol_validated() {
+    let context = |action_id: Option<&str>, action_schema_id: Option<&str>| TickContext {
+        tick: 1,
+        inputs: vec![TickInput {
+            player_id: "seat-a".into(),
+            data: json!({}),
+            timestamp: None,
+            action_id: action_id.map(str::to_owned),
+            action_schema_id: action_schema_id.map(str::to_owned),
+        }],
+        commands: vec![],
+        elapsed_seconds: 0.1,
+    };
+    assert!(context(None, None).validate().is_ok());
+    assert!(context(Some("action-1"), Some("action.v1")).validate().is_ok());
+    assert!(context(Some("action-1"), None).validate().is_err());
+    assert!(context(Some(""), Some("action.v1")).validate().is_err());
+    assert!(context(Some("action-1"), Some("invalid schema")).validate().is_err());
+
+    let result = GameActionResult {
+        action_id: "action-1".into(),
+        status: GameActionOutcome::Applied,
+        code: Some("APPLIED".into()),
+    };
+    assert!(result.validate().is_ok());
+    let invalid = GameActionResult {
+        action_id: "action-1".into(),
+        status: GameActionOutcome::Rejected,
+        code: Some("invalid code".into()),
+    };
+    assert!(invalid.validate().is_err());
 }
 
 #[test]
@@ -570,6 +604,56 @@ async fn agent_player_contract_and_projection_routes_validate_scope_and_view() {
         .await
         .unwrap();
     assert_eq!(legacy_response.status().as_u16(), 404);
+
+    let unconfigured_view_response = create_game_router(
+        Arc::new(AgentGame(capabilities.clone())),
+        None,
+    )
+    .oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/agent/player-view")
+            .header("content-type", "application/json")
+            .body(Body::from(fixture["request"].to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unconfigured_view_response.status().as_u16(), 200);
+
+    let health_response = create_game_router(Arc::new(MockGame), None)
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(health_response.status().as_u16(), 200);
+    let health_body = health_response.into_body().collect().await.unwrap().to_bytes();
+    let health: HealthResponse = serde_json::from_slice(&health_body).unwrap();
+    assert_eq!(health.game_id, "randseed-game");
+
+    let unconfigured_view_response = create_game_router(
+        Arc::new(AgentGame(capabilities.clone())),
+        None,
+    )
+    .oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/agent/player-view")
+            .header("content-type", "application/json")
+            .body(Body::from(fixture["request"].to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unconfigured_view_response.status().as_u16(), 200);
+
+    let health_response = create_game_router(Arc::new(MockGame), None)
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(health_response.status().as_u16(), 200);
+    let health_body = health_response.into_body().collect().await.unwrap().to_bytes();
+    let health: HealthResponse = serde_json::from_slice(&health_body).unwrap();
+    assert_eq!(health.game_id, "randseed-game");
 }
 
 #[tokio::test]

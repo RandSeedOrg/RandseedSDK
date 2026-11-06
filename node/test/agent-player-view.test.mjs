@@ -36,6 +36,17 @@ test("Agent player contract and recipient roster validation fail closed", () => 
   }));
 });
 
+test("Agent player identifiers use UTF-8 bounds and reject C1 controls", () => {
+  assert.throws(() => validateAgentPlayerViewRequest({
+    ...fixture.request,
+    context: { ...fixture.request.context, roomId: "界".repeat(86) },
+  }));
+  assert.throws(() => validateAgentPlayerViewRequest({
+    ...fixture.request,
+    context: { ...fixture.request.context, roomId: "room-\u0085" },
+  }));
+});
+
 test("action requests, receipts, leases, and no-action Skill decisions match shared vectors", () => {
   assert.deepEqual(validateAgentControllerLease(fixture.lease), fixture.lease);
   assert.deepEqual(validateAgentActionRequest(fixture.actionRequest), fixture.actionRequest);
@@ -48,7 +59,13 @@ test("action requests, receipts, leases, and no-action Skill decisions match sha
 test("host projection endpoint returns only the game-authored recipient view", async t => {
   const server = createGameServer({
     agentPlayerContract: () => fixture.contract,
-    projectAgentPlayerView: () => fixture.projection,
+    projectAgentPlayerView: request => {
+      request.context.playerId = "seat-b";
+      request.context.scope.gameId = "another-game";
+      request.context.sequence = 100;
+      request.context.tick = 100;
+      return fixture.projection;
+    },
   }, 0, { gameId: "hidden-hand" });
   t.after(() => new Promise(resolve => server.close(resolve)));
   await once(server, "listening");
@@ -64,4 +81,30 @@ test("host projection endpoint returns only the game-authored recipient view", a
   const view = await response.json();
   assert.deepEqual(view, fixture.view);
   assert.equal(JSON.stringify(view).includes("B_SECRET"), false);
+});
+
+test("nullable Agent player contracts return 404 without calling the projector", async t => {
+  let projectCalls = 0;
+  const server = createGameServer({
+    agentPlayerContract: () => null,
+    projectAgentPlayerView: () => {
+      projectCalls += 1;
+      return fixture.projection;
+    },
+  }, 0, { gameId: "hidden-hand" });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  const contractResponse = await fetch(`${baseUrl}/agent/player-contract`);
+  assert.equal(contractResponse.status, 404);
+  const viewResponse = await fetch(`${baseUrl}/agent/player-view`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fixture.request),
+  });
+  assert.equal(viewResponse.status, 404);
+  assert.equal(projectCalls, 0);
 });

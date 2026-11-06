@@ -15,14 +15,22 @@ pub const MAX_AGENT_PLAYER_ACTION_BYTES: usize = 2_000;
 pub const MAX_AGENT_PLAYER_MEMORY_BYTES: usize = 16_000;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-fn valid_key(value: &str) -> bool {
+pub(crate) fn valid_key(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
         && value.trim() == value
         && !value.chars().any(char::is_control)
 }
 
-fn valid_schema_id(value: &str) -> bool {
+pub(crate) fn valid_schema_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+}
+
+pub(crate) fn valid_action_code(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
@@ -440,13 +448,7 @@ impl AgentActionReceipt {
             || self.controller_epoch > MAX_SAFE_INTEGER
             || self.expected_tick > MAX_SAFE_INTEGER
             || !terminal_tick_valid
-            || self.code.as_ref().is_some_and(|code| {
-                code.is_empty()
-                    || code.len() > 128
-                    || !code
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
-            })
+            || self.code.as_ref().is_some_and(|code| !valid_action_code(code))
         {
             return Err(SdkError::Validation("Invalid Agent action receipt.".into()));
         }
@@ -513,10 +515,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> Value {
-        serde_json::from_str(include_str!(
-            "../../../protocol/fixtures/agent-player-v1.json"
-        ))
-        .unwrap()
+        serde_json::from_str(include_str!("../tests/fixtures/agent-player-v1.json")).unwrap()
     }
 
     #[test]
@@ -580,5 +579,18 @@ mod tests {
         request = serde_json::from_value(fixture["request"].clone()).unwrap();
         projection.public_state = Value::String("x".repeat(MAX_AGENT_PLAYER_VIEW_BYTES));
         assert!(create_agent_player_view(&contract, &request, projection).is_err());
+    }
+
+    #[test]
+    fn request_identifiers_enforce_utf8_bytes_and_all_control_characters() {
+        let fixture = fixture();
+        let mut request: AgentPlayerViewRequest =
+            serde_json::from_value(fixture["request"].clone()).unwrap();
+        request.context.room_id = "界".repeat(86);
+        assert!(request.validate().is_err());
+
+        request = serde_json::from_value(fixture["request"].clone()).unwrap();
+        request.context.room_id = "room-\u{0085}".into();
+        assert!(request.validate().is_err());
     }
 }

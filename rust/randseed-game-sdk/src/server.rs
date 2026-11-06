@@ -9,9 +9,9 @@ use crate::agent_player_view::{
 };
 use crate::errors::SdkError;
 use crate::types::{
-    validate_game_result_units, CommandRequest, CommandResult, GameCommand, GameManifest,
-    GameResult, GameResultEvent, HealthResponse, InitResult, IsGameOverRequest, MatchConfig,
-    PlayerEventRequest, PlayerEventResult, TickContext, TickRequest, TickResult,
+    validate_game_result_units, CommandRequest, CommandResult, GameActionResult, GameCommand,
+    GameManifest, GameResult, GameResultEvent, HealthResponse, InitResult, IsGameOverRequest,
+    MatchConfig, PlayerEventRequest, PlayerEventResult, TickContext, TickRequest, TickResult,
 };
 use async_trait::async_trait;
 use axum::{
@@ -101,7 +101,7 @@ pub trait GameServer: Send + Sync + 'static {
 /// Shared state used by the internal routes.
 struct AppState<G: GameServer> {
     game: Arc<G>,
-    game_id: String,
+    game_id: Option<String>,
     start_time: Instant,
 }
 
@@ -170,8 +170,23 @@ fn invalid_result_units_response() -> Response {
         .into_response()
 }
 
+fn invalid_action_results_response() -> Response {
+    tracing::error!("Game callback returned invalid action results.");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: "Game server returned invalid action results.".into(),
+        }),
+    )
+        .into_response()
+}
+
 fn result_units_are_valid(result_units: Option<&[GameResultEvent]>) -> bool {
     validate_game_result_units(result_units, None).is_ok()
+}
+
+fn action_results_are_valid(action_results: Option<&[GameActionResult]>) -> bool {
+    action_results.is_none_or(|results| results.iter().all(|result| result.validate().is_ok()))
 }
 
 async fn call_game<T>(future: impl Future<Output = Result<T, SdkError>>) -> Result<T, SdkError> {
@@ -204,7 +219,10 @@ async fn handle_health<G: GameServer>(State(state): State<Arc<AppState<G>>>) -> 
         StatusCode::OK,
         Json(HealthResponse {
             status: "ok".into(),
-            game_id: state.game_id.clone(),
+            game_id: state
+                .game_id
+                .clone()
+                .unwrap_or_else(|| "randseed-game".into()),
             uptime: Some(uptime),
         }),
     )
@@ -269,7 +287,12 @@ async fn handle_agent_player_view<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
     ProtocolJson(request): ProtocolJson<AgentPlayerViewRequest>,
 ) -> impl IntoResponse {
-    if request.validate().is_err() || request.context.scope.game_id != state.game_id {
+    if request.validate().is_err()
+        || state
+            .game_id
+            .as_deref()
+            .is_some_and(|game_id| request.context.scope.game_id != game_id)
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -352,10 +375,15 @@ async fn handle_tick<G: GameServer>(
         return map_error_to_response(e).into_response();
     }
     match call_game(state.game.tick(req.ctx, req.state)).await {
-        Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
+        Ok(res) if !result_units_are_valid(res.result_units.as_deref()) => {
+            invalid_result_units_response()
+        }
+        Ok(res) if !action_results_are_valid(res.action_results.as_deref()) => {
+            invalid_action_results_response()
+        }
+        Ok(res) => {
             (StatusCode::OK, Json(res)).into_response()
         }
-        Ok(_) => invalid_result_units_response(),
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
@@ -464,7 +492,7 @@ async fn handle_fallback(method: Method, uri: Uri) -> impl IntoResponse {
 pub fn create_game_router<G: GameServer>(game: Arc<G>, game_id: Option<String>) -> Router {
     let app_state = Arc::new(AppState {
         game,
-        game_id: game_id.unwrap_or_else(|| "randseed-game".into()),
+        game_id,
         start_time: Instant::now(),
     });
 

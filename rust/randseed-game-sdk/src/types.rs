@@ -2,6 +2,7 @@
 //!
 //! Structs and serialization names follow the room-host wire protocol.
 
+use crate::agent_player_view::{valid_action_code, valid_key, valid_schema_id};
 use crate::errors::SdkError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -851,6 +852,20 @@ pub struct GameActionResult {
     pub code: Option<String>,
 }
 
+impl GameActionResult {
+    /// Validate the stable action identifier and optional machine-readable code.
+    pub fn validate(&self) -> Result<(), SdkError> {
+        if !valid_key(&self.action_id)
+            || self.code.as_ref().is_some_and(|code| !valid_action_code(code))
+        {
+            return Err(SdkError::Validation(
+                "Invalid game action result.".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A trusted command issued by the room host or an administrator.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GameCommand {
@@ -913,6 +928,19 @@ impl TickContext {
             if item.action_id.is_some() != item.action_schema_id.is_some() {
                 return Err(SdkError::Validation(
                     "actionId and actionSchemaId must be supplied together.".into(),
+                ));
+            }
+            if item
+                .action_id
+                .as_deref()
+                .is_some_and(|action_id| !valid_key(action_id))
+                || item
+                    .action_schema_id
+                    .as_deref()
+                    .is_some_and(|schema_id| !valid_schema_id(schema_id))
+            {
+                return Err(SdkError::Validation(
+                    "input action identifiers are invalid.".into(),
                 ));
             }
         }

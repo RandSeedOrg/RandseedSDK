@@ -1,4 +1,8 @@
 import type { GameCommand, GameManifest, JsonValue, MatchConfig, TickContext } from "./types.js";
+import {
+  isValidActionSchemaId,
+  isValidProtocolKey,
+} from "./protocol-identifiers.js";
 import { validateGameResultDefinition } from "./result-units.js";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -166,6 +170,17 @@ export function validateTickContext(ctx: unknown): asserts ctx is TickContext {
       (!isSafeInteger(input.timestamp) || input.timestamp < 0)
     ) {
       throw new Error("input.timestamp must be a non-negative safe integer.");
+    }
+    const hasActionId = Object.hasOwn(input, "actionId");
+    const hasActionSchemaId = Object.hasOwn(input, "actionSchemaId");
+    if (hasActionId !== hasActionSchemaId) {
+      throw new Error("input.actionId and input.actionSchemaId must be supplied together.");
+    }
+    if (
+      hasActionId &&
+      (!isValidProtocolKey(input.actionId) || !isValidActionSchemaId(input.actionSchemaId))
+    ) {
+      throw new Error("input action identifiers are invalid.");
     }
   }
   if (Object.hasOwn(ctx, "commands")) {
