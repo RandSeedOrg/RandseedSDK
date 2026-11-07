@@ -2,11 +2,14 @@
 //! strongly typed server traits for the RandSeed room-host protocol.
 
 use crate::agent_capabilities::AgentGameCapabilities;
+use crate::agent_player_view::{
+    AgentPlayerContract, AgentPlayerViewContext, AgentPlayerViewProjection, AgentPlayerViewRequest,
+};
 use crate::errors::SdkError;
 use crate::server::GameServer;
 use crate::types::{
-    validate_game_result_units, CommandResult, GameCommand, GameManifest, GameResult,
-    GameResultEvent, InitResult, IsGameOverRequest, MatchConfig, PlayerEventRequest,
+    validate_game_result_units, CommandResult, GameActionResult, GameCommand, GameManifest,
+    GameResult, GameResultEvent, InitResult, IsGameOverRequest, MatchConfig, PlayerEventRequest,
     PlayerEventResult, TickContext, TickInput, TickResult,
 };
 use async_trait::async_trait;
@@ -219,7 +222,7 @@ pub enum StreamServerMessage {
 }
 
 /// Strongly typed `init` result avoiding intermediate `serde_json::Value` round-trips.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TypedInitResult<S> {
     /// Initial strongly typed game state.
     pub state: S,
@@ -234,7 +237,7 @@ pub struct TypedInitResult<S> {
 }
 
 /// Strongly typed single-tick transition output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TypedTickResult {
     /// Optional public broadcasts.
     pub broadcasts: Option<Vec<Value>>,
@@ -246,6 +249,8 @@ pub struct TypedTickResult {
     pub joinable: Option<bool>,
     /// Optional per-player projected views.
     pub player_views: Option<HashMap<String, Value>>,
+    /// Explicit results for inputs carrying action IDs.
+    pub action_results: Option<Vec<GameActionResult>>,
 }
 
 /// Strongly typed player join/leave output (mutating `State` in place).
@@ -275,6 +280,24 @@ pub trait TypedGameServer: Send + Sync + 'static {
     /// Optional Agent support declaration.
     async fn agent_capabilities(&self) -> Result<Option<AgentGameCapabilities>, SdkError> {
         Ok(None)
+    }
+
+    /// Declare the authoritative per-seat Agent view and action contract.
+    async fn agent_player_contract(&self) -> Result<Option<AgentPlayerContract>, SdkError> {
+        Ok(None)
+    }
+
+    /// Project a recipient-safe Agent view from strongly typed state and committed events.
+    async fn project_agent_player_view_typed(
+        &self,
+        _context: &AgentPlayerViewContext,
+        _players: &[String],
+        _state: &Self::State,
+        _committed_events: &[Value],
+    ) -> Result<AgentPlayerViewProjection, SdkError> {
+        Err(SdkError::NotImplemented(
+            "Agent player projection is not implemented.".into(),
+        ))
     }
 
     /// Optional stream durability override (`None` selects platform default by `tickRateHz`).
@@ -347,6 +370,26 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         self.0.agent_capabilities().await
     }
 
+    async fn agent_player_contract(&self) -> Result<Option<AgentPlayerContract>, SdkError> {
+        self.0.agent_player_contract().await
+    }
+
+    async fn project_agent_player_view(
+        &self,
+        request: AgentPlayerViewRequest,
+    ) -> Result<AgentPlayerViewProjection, SdkError> {
+        let state: T::State = serde_json::from_value(request.state)
+            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        self.0
+            .project_agent_player_view_typed(
+                &request.context,
+                &request.players,
+                &state,
+                &request.committed_events,
+            )
+            .await
+    }
+
     fn durability(&self) -> Option<StreamDurability> {
         self.0.durability()
     }
@@ -385,6 +428,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
             result_units: out.result_units,
             joinable: out.joinable,
             player_views: out.player_views,
+            action_results: out.action_results,
         })
     }
 
@@ -516,6 +560,19 @@ async fn guard_unwind<T>(fut: impl Future<Output = Result<T, SdkError>>) -> Resu
         Ok(res) => res,
         Err(_) => Err(SdkError::Internal("Game callback panicked.".into())),
     }
+}
+
+fn validate_action_results_contract(
+    action_results: Option<&[GameActionResult]>,
+) -> Result<(), SdkError> {
+    if let Some(results) = action_results {
+        if results.iter().any(|result| result.validate().is_err()) {
+            return Err(SdkError::Internal(
+                "Game server returned invalid action results.".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_game_over_contract(res: &GameResult) -> Result<(), SdkError> {
@@ -691,6 +748,7 @@ impl<G: GameServer> ValueStreamSession<G> {
         ctx.validate()?;
         let tick_res = guard_unwind(game.tick(ctx, cur_state)).await?;
         validate_game_result_units(tick_res.result_units.as_deref(), None)?;
+        validate_action_results_contract(tick_res.action_results.as_deref())?;
         cur_state = tick_res.state;
         if let Some(b) = tick_res.broadcasts {
             broadcasts.extend(b);
@@ -1014,6 +1072,12 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
                     if let Some(u) = out.result_units {
                         result_units.extend(u);
                     }
+                    if out.joinable.is_some() {
+                        joinable = out.joinable;
+                    }
+                    if out.player_views.is_some() {
+                        player_views = out.player_views;
+                    }
                 }
             }
         }
@@ -1027,6 +1091,7 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
         ctx.validate()?;
         let tick_out = guard_unwind(game.step_typed(ctx, state, view_ctx, emit_views)).await?;
         validate_game_result_units(tick_out.result_units.as_deref(), None)?;
+        validate_action_results_contract(tick_out.action_results.as_deref())?;
         if let Some(b) = tick_out.broadcasts {
             broadcasts.extend(b);
         }

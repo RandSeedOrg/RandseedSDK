@@ -3,10 +3,12 @@
 use async_trait::async_trait;
 use randseed_game_sdk::stream::{ActiveStreamSession, StreamSessionFactory, TypedStreamFactory};
 use randseed_game_sdk::{
-    create_typed_game_router, GameManifest, GameResult, MatchConfig, MatchSummary, NextMatchPolicy,
-    SdkError, StreamClientMessage, StreamDurability, StreamReplayStep, StreamServerMessage,
-    StreamStepEvent, TickContext, TickInput, TypedEventOutcome, TypedGameServer, TypedInitResult,
-    TypedTickResult, STREAM_PROTOCOL_V1,
+    create_typed_game_router, AgentPlayerContract, AgentPlayerDecisionState, AgentPlayerMode,
+    AgentPlayerViewContext, AgentPlayerViewProjection, GameActionOutcome, GameActionResult,
+    GameCommand, GameManifest, GameResult, MatchConfig, MatchSummary, NextMatchPolicy, SdkError,
+    StreamClientMessage, StreamDurability, StreamReplayStep, StreamServerMessage, StreamStepEvent,
+    TickContext, TickInput, TypedEventOutcome, TypedGameServer, TypedInitResult, TypedTickResult,
+    STREAM_PROTOCOL_V1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,6 +37,42 @@ impl TypedGameServer for TypedCounterGame {
 
     fn durability(&self) -> Option<StreamDurability> {
         Some(StreamDurability::Checkpoint)
+    }
+
+    async fn agent_player_contract(&self) -> Result<Option<AgentPlayerContract>, SdkError> {
+        Ok(Some(AgentPlayerContract {
+            player_view_protocol_version: 1,
+            action_protocol_version: 1,
+            player_view_schema_id: "counter.view.v1".into(),
+            action_schema_id: "counter.action.v1".into(),
+            modes: vec![AgentPlayerMode::Follow, AgentPlayerMode::Autoplay],
+            max_decision_hz: 5.0,
+            independent_seats: true,
+            background_autoplay: false,
+        }))
+    }
+
+    async fn project_agent_player_view_typed(
+        &self,
+        context: &AgentPlayerViewContext,
+        _players: &[String],
+        state: &Self::State,
+        committed_events: &[serde_json::Value],
+    ) -> Result<AgentPlayerViewProjection, SdkError> {
+        Ok(AgentPlayerViewProjection {
+            public_state: json!({
+                "tick": state.tick,
+                "score": state.score,
+            }),
+            private_state: json!({
+                "seat": context.player_id,
+            }),
+            visible_events: committed_events.to_vec(),
+            decision: AgentPlayerDecisionState {
+                can_act: state.score < 10,
+                deadline_at: None,
+            },
+        })
     }
 
     async fn manifest(&self) -> Result<GameManifest, SdkError> {
@@ -79,9 +117,23 @@ impl TypedGameServer for TypedCounterGame {
         emit_views: bool,
     ) -> Result<TypedTickResult, SdkError> {
         state.tick = ctx.tick;
+        let mut action_results = Vec::new();
         for input in &ctx.inputs {
             if let Some(delta) = input.data.get("delta").and_then(|v| v.as_i64()) {
                 state.score += delta;
+                if let Some(action_id) = &input.action_id {
+                    action_results.push(GameActionResult {
+                        action_id: action_id.clone(),
+                        status: GameActionOutcome::Applied,
+                        code: None,
+                    });
+                }
+            } else if let Some(action_id) = &input.action_id {
+                action_results.push(GameActionResult {
+                    action_id: action_id.clone(),
+                    status: GameActionOutcome::Rejected,
+                    code: Some("missing_delta".into()),
+                });
             }
         }
         let player_views = if emit_views {
@@ -107,6 +159,11 @@ impl TypedGameServer for TypedCounterGame {
             result_units: None,
             joinable: Some(state.players.len() < 8),
             player_views,
+            action_results: if action_results.is_empty() {
+                None
+            } else {
+                Some(action_results)
+            },
         })
     }
 
@@ -152,6 +209,33 @@ impl TypedGameServer for TypedCounterGame {
             })
         }
     }
+    async fn on_command_typed(
+        &self,
+        command: GameCommand,
+        state: &mut Self::State,
+        _view_ctx: &mut Self::ViewContext,
+    ) -> Result<TypedEventOutcome, SdkError> {
+        if command.command_type == "lock_room" {
+            let mut views = HashMap::new();
+            for p in &state.players {
+                views.insert(
+                    p.clone(),
+                    json!({
+                        "tick": state.tick,
+                        "score": state.score,
+                        "locked": true,
+                    }),
+                );
+            }
+            return Ok(TypedEventOutcome {
+                broadcasts: Some(vec![json!({ "event": "locked" })]),
+                joinable: Some(false),
+                player_views: Some(views),
+                ..Default::default()
+            });
+        }
+        Ok(TypedEventOutcome::default())
+    }
 }
 
 #[tokio::test]
@@ -171,7 +255,7 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
                     inputs: vec![TickInput {
                         player_id: "p1".into(),
                         data: json!({ "delta": 2 }),
-                        timestamp: None,
+                        ..Default::default()
                     }],
                     events: vec![],
                 },
@@ -180,7 +264,7 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
                     inputs: vec![TickInput {
                         player_id: "p1".into(),
                         data: json!({ "delta": 3 }),
-                        timestamp: None,
+                        ..Default::default()
                     }],
                     events: vec![StreamStepEvent::Join {
                         player_id: "p2".into(),
@@ -216,7 +300,7 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
             inputs: vec![TickInput {
                 player_id: "p1".into(),
                 data: json!({ "delta": 1 }),
-                timestamp: None,
+                ..Default::default()
             }],
             events: vec![],
             resync_players: vec![],
@@ -249,7 +333,7 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
             inputs: vec![TickInput {
                 player_id: "p2".into(),
                 data: json!({ "delta": 5 }),
-                timestamp: None,
+                ..Default::default()
             }],
             events: vec![],
             resync_players: vec!["p2".into()],
@@ -338,4 +422,179 @@ async fn manifest_advertises_stream_capability_and_ws_endpoint_upgrades_over_tcp
         header_str.starts_with("HTTP/1.1 101 Switching Protocols"),
         "expected 101 Switching Protocols, got: {header_str}"
     );
+}
+
+#[tokio::test]
+async fn typed_stream_session_command_propagates_joinable_and_player_views() {
+    struct QuietStepCounterGame;
+
+    #[async_trait]
+    impl TypedGameServer for QuietStepCounterGame {
+        type State = CounterState;
+        type ViewContext = CounterViewCtx;
+
+        async fn manifest(&self) -> Result<GameManifest, SdkError> {
+            TypedCounterGame.manifest().await
+        }
+
+        async fn init_typed(
+            &self,
+            config: MatchConfig,
+        ) -> Result<TypedInitResult<Self::State>, SdkError> {
+            TypedCounterGame.init_typed(config).await
+        }
+
+        async fn step_typed(
+            &self,
+            ctx: TickContext,
+            state: &mut Self::State,
+            _view_ctx: &mut Self::ViewContext,
+            _emit_views: bool,
+        ) -> Result<TypedTickResult, SdkError> {
+            state.tick = ctx.tick;
+            // Deliberately leave `joinable` and `player_views` as `None` so command overrides survive.
+            Ok(TypedTickResult::default())
+        }
+
+        async fn on_command_typed(
+            &self,
+            command: GameCommand,
+            state: &mut Self::State,
+            view_ctx: &mut Self::ViewContext,
+        ) -> Result<TypedEventOutcome, SdkError> {
+            TypedCounterGame
+                .on_command_typed(command, state, view_ctx)
+                .await
+        }
+
+        async fn is_game_over_typed(&self, state: &Self::State) -> Result<GameResult, SdkError> {
+            TypedCounterGame.is_game_over_typed(state).await
+        }
+    }
+
+    let factory = TypedStreamFactory(Arc::new(QuietStepCounterGame));
+    let mut session = factory.new_session();
+    let _ = session
+        .handle_message(StreamClientMessage::Hydrate {
+            match_id: "m-cmd".into(),
+            tick_rate_hz: 20.0,
+            tick: 0,
+            state: json!({ "tick": 0, "score": 0, "players": ["p1"] }),
+            replay: vec![],
+            resync_players: vec![],
+        })
+        .await;
+
+    let step = session
+        .handle_message(StreamClientMessage::Step {
+            tick: 1,
+            inputs: vec![],
+            events: vec![StreamStepEvent::Command {
+                command: GameCommand {
+                    command_type: "lock_room".into(),
+                    data: None,
+                    issuer: Some("host".into()),
+                    timestamp: None,
+                },
+            }],
+            resync_players: vec![],
+            want_state: false,
+        })
+        .await;
+
+    match step {
+        StreamServerMessage::StepResult {
+            tick,
+            joinable,
+            player_views,
+            broadcasts,
+            ..
+        } => {
+            assert_eq!(tick, 1);
+            assert_eq!(joinable, Some(false));
+            assert_eq!(broadcasts, vec![json!({ "event": "locked" })]);
+            let views = player_views.expect("command player_views must be preserved");
+            assert_eq!(views["p1"]["locked"], json!(true));
+        }
+        other => panic!("unexpected step response: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn typed_game_router_serves_agent_contract_projection_and_tick_action_results() {
+    let router = create_typed_game_router(Arc::new(TypedCounterGame), Some("counter".into()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let client = reqwest::Client::new();
+
+    let contract_resp = client
+        .get(format!("http://{addr}/agent/player-contract"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(contract_resp.status(), 200);
+    let contract_json: serde_json::Value = contract_resp.json().await.unwrap();
+    assert_eq!(contract_json["actionSchemaId"], "counter.action.v1");
+
+    let tick_resp = client
+        .post(format!("http://{addr}/tick"))
+        .json(&json!({
+            "ctx": {
+                "tick": 1,
+                "elapsedSeconds": 0.05,
+                "inputs": [
+                    {
+                        "playerId": "p1",
+                        "delta": 4,
+                        "actionId": "act-100",
+                        "actionSchemaId": "counter.action.v1"
+                    }
+                ]
+            },
+            "state": { "tick": 0, "score": 0, "players": ["p1"] }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(tick_resp.status(), 200);
+    let tick_json: serde_json::Value = tick_resp.json().await.unwrap();
+    assert_eq!(tick_json["state"]["score"], 4);
+    assert_eq!(
+        tick_json["actionResults"],
+        json!([{ "actionId": "act-100", "status": "applied" }])
+    );
+
+    let view_resp = client
+        .post(format!("http://{addr}/agent/player-view"))
+        .json(&json!({
+            "context": {
+                "scope": {
+                    "gameId": "counter",
+                    "environment": "staging",
+                    "releaseVersion": "1.0.0"
+                },
+                "roomId": "room-1",
+                "matchId": "match-1",
+                "matchSeq": 1,
+                "playerId": "p1",
+                "sequence": 1,
+                "tick": 1
+            },
+            "players": ["p1"],
+            "state": tick_json["state"],
+            "committedEvents": [{ "type": "scored" }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(view_resp.status(), 200);
+    let view_json: serde_json::Value = view_resp.json().await.unwrap();
+    assert_eq!(view_json["schemaId"], "counter.view.v1");
+    assert_eq!(view_json["publicState"]["score"], 4);
+    assert_eq!(view_json["self"]["playerId"], "p1");
+    assert_eq!(view_json["self"]["privateState"]["seat"], "p1");
 }

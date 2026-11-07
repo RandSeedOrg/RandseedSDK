@@ -892,7 +892,7 @@ impl MatchConfig {
 }
 
 /// One player's input submitted for a simulation tick.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct TickInput {
     /// Player identifier.
     #[serde(rename = "playerId")]
@@ -965,6 +965,18 @@ impl<'de> Deserialize<'de> for TickInput {
             data: Option<serde_json::Value>,
             #[serde(default, deserialize_with = "deserialize_present_option")]
             timestamp: Option<u64>,
+            #[serde(
+                rename = "actionId",
+                default,
+                deserialize_with = "deserialize_present_option"
+            )]
+            action_id: Option<String>,
+            #[serde(
+                rename = "actionSchemaId",
+                default,
+                deserialize_with = "deserialize_present_option"
+            )]
+            action_schema_id: Option<String>,
             #[serde(default, flatten)]
             extra: serde_json::Map<String, serde_json::Value>,
         }
@@ -986,6 +998,8 @@ impl<'de> Deserialize<'de> for TickInput {
             player_id: raw.player_id,
             data,
             timestamp: raw.timestamp,
+            action_id: raw.action_id,
+            action_schema_id: raw.action_schema_id,
         })
     }
 }
@@ -1083,7 +1097,7 @@ impl TickContext {
 }
 
 /// Result returned from match initialization.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct InitResult {
     /// Initial game state.
     pub state: serde_json::Value,
@@ -1111,7 +1125,7 @@ pub struct InitResult {
 }
 
 /// Result returned after processing one simulation tick.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TickResult {
     /// Updated game state.
     pub state: serde_json::Value,
@@ -1148,7 +1162,7 @@ pub struct TickResult {
 }
 
 /// Result returned after a player lifecycle event.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PlayerEventResult {
     /// Updated game state.
     pub state: serde_json::Value,
@@ -1257,7 +1271,7 @@ pub struct GameResult {
 }
 
 /// Result returned after processing a trusted command.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CommandResult {
     /// Updated game state.
     pub state: serde_json::Value,

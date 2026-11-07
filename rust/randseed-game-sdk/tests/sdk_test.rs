@@ -1397,13 +1397,67 @@ fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
 
     let closed_tick = TickResult {
         state: json!({ "phase": "playing" }),
-        player_views: None,
-        broadcasts: None,
-        persist: false,
         joinable: Some(false),
-        result_units: None,
+        ..Default::default()
     };
     let closed_tick_json = serde_json::to_value(&closed_tick).unwrap();
     assert_eq!(closed_tick_json["joinable"], json!(false));
     assert!(closed_tick_json.get("playerViews").is_none());
+    assert!(closed_tick_json.get("actionResults").is_none());
+}
+
+#[test]
+fn tick_input_deserializes_action_fields_without_polluting_data_and_rejects_nulls() {
+    let structured: TickInput = serde_json::from_value(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "timestamp": 42,
+        "actionId": "act-1",
+        "actionSchemaId": "counter.move.v1"
+    }))
+    .unwrap();
+    assert_eq!(structured.player_id, "p1");
+    assert_eq!(structured.timestamp, Some(42));
+    assert_eq!(structured.action_id.as_deref(), Some("act-1"));
+    assert_eq!(
+        structured.action_schema_id.as_deref(),
+        Some("counter.move.v1")
+    );
+    assert_eq!(structured.data, json!({ "move": "up" }));
+
+    let flattened: TickInput = serde_json::from_value(json!({
+        "playerId": "p2",
+        "dx": 1,
+        "dy": -1,
+        "actionId": "act-2",
+        "actionSchemaId": "counter.move.v1"
+    }))
+    .unwrap();
+    assert_eq!(flattened.player_id, "p2");
+    assert_eq!(flattened.action_id.as_deref(), Some("act-2"));
+    assert_eq!(
+        flattened.action_schema_id.as_deref(),
+        Some("counter.move.v1")
+    );
+    assert_eq!(flattened.data, json!({ "dx": 1, "dy": -1 }));
+
+    let null_action_id = serde_json::from_value::<TickInput>(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "actionId": null
+    }));
+    assert!(
+        null_action_id.is_err(),
+        "explicit null actionId must fail deserialization"
+    );
+
+    let null_schema_id = serde_json::from_value::<TickInput>(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "actionSchemaId": null
+    }));
+    assert!(
+        null_schema_id.is_err(),
+        "explicit null actionSchemaId must fail deserialization"
+    );
 }
