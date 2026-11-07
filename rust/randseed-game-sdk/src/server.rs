@@ -8,6 +8,10 @@ use crate::agent_player_view::{
     AgentPlayerViewRequest,
 };
 use crate::errors::SdkError;
+use crate::stream::{
+    serve_stream_socket, StreamDurability, StreamSessionFactory, TypedGameAdapter, TypedGameServer,
+    TypedStreamFactory, ValueStreamFactory, STREAM_PROTOCOL_V1,
+};
 use crate::types::{
     validate_game_result_units, CommandRequest, CommandResult, GameActionResult, GameCommand,
     GameManifest, GameResult, GameResultEvent, HealthResponse, InitResult, IsGameOverRequest,
@@ -15,7 +19,7 @@ use crate::types::{
 };
 use async_trait::async_trait;
 use axum::{
-    extract::{DefaultBodyLimit, FromRequest, Request, State},
+    extract::{ws::WebSocketUpgrade, DefaultBodyLimit, FromRequest, Request, State},
     http::{Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -56,6 +60,11 @@ pub trait GameServer: Send + Sync + 'static {
         ))
     }
 
+    /// Optional stream durability policy (`None` uses platform default by `tickRateHz`).
+    fn durability(&self) -> Option<StreamDurability> {
+        None
+    }
+
     /// Return game metadata for `GET /manifest`.
     async fn manifest(&self) -> Result<GameManifest, SdkError>;
 
@@ -76,6 +85,14 @@ pub trait GameServer: Send + Sync + 'static {
         state: serde_json::Value,
     ) -> Result<PlayerEventResult, SdkError>;
 
+    /// Handle a player joining or reconnecting with full request context (including extension fields).
+    async fn on_player_join_ext(
+        &self,
+        req: PlayerEventRequest,
+    ) -> Result<PlayerEventResult, SdkError> {
+        self.on_player_join(req.player_id, req.state).await
+    }
+
     /// Handle a player leaving.
     async fn on_player_leave(
         &self,
@@ -83,8 +100,21 @@ pub trait GameServer: Send + Sync + 'static {
         state: serde_json::Value,
     ) -> Result<PlayerEventResult, SdkError>;
 
+    /// Handle a player leaving with full request context (including extension fields).
+    async fn on_player_leave_ext(
+        &self,
+        req: PlayerEventRequest,
+    ) -> Result<PlayerEventResult, SdkError> {
+        self.on_player_leave(req.player_id, req.state).await
+    }
+
     /// Determine whether the match has ended and, if so, return a next-match policy.
     async fn is_game_over(&self, state: serde_json::Value) -> Result<GameResult, SdkError>;
+
+    /// Determine whether the match has ended with full request context (including extension fields).
+    async fn is_game_over_ext(&self, req: IsGameOverRequest) -> Result<GameResult, SdkError> {
+        self.is_game_over(req.state).await
+    }
 
     /// Handle a trusted host command. The default implementation is unsupported.
     async fn on_command(
@@ -101,6 +131,7 @@ pub trait GameServer: Send + Sync + 'static {
 /// Shared state used by the internal routes.
 struct AppState<G: GameServer> {
     game: Arc<G>,
+    stream_factory: Arc<dyn StreamSessionFactory>,
     game_id: Option<String>,
     start_time: Instant,
 }
@@ -207,10 +238,52 @@ async fn handle_manifest<G: GameServer>(
                 ))
                 .into_response();
             }
-            (StatusCode::OK, Json(manifest)).into_response()
+            let mut resp = (StatusCode::OK, Json(manifest)).into_response();
+            resp.headers_mut().insert(
+                "x-randseed-stream-protocol",
+                axum::http::HeaderValue::from_static(STREAM_PROTOCOL_V1),
+            );
+            if let Some(durability) = state.game.durability() {
+                let val = match durability {
+                    StreamDurability::Checkpoint => "checkpoint",
+                    StreamDurability::Strict => "strict",
+                };
+                resp.headers_mut().insert(
+                    "x-randseed-stream-durability",
+                    axum::http::HeaderValue::from_static(val),
+                );
+            }
+            resp
         }
         Err(err) => map_error_to_response(err).into_response(),
     }
+}
+
+async fn handle_stream<G: GameServer>(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    let factory = state.stream_factory.clone();
+    let durability = state.game.durability();
+    let mut resp = ws
+        .max_message_size(MAX_REQUEST_BODY_BYTES)
+        .on_upgrade(move |socket| serve_stream_socket(socket, factory))
+        .into_response();
+    resp.headers_mut().insert(
+        "x-randseed-stream-protocol",
+        axum::http::HeaderValue::from_static(STREAM_PROTOCOL_V1),
+    );
+    if let Some(mode) = durability {
+        let val = match mode {
+            StreamDurability::Checkpoint => "checkpoint",
+            StreamDurability::Strict => "strict",
+        };
+        resp.headers_mut().insert(
+            "x-randseed-stream-durability",
+            axum::http::HeaderValue::from_static(val),
+        );
+    }
+    resp
 }
 
 async fn handle_health<G: GameServer>(State(state): State<Arc<AppState<G>>>) -> impl IntoResponse {
@@ -388,15 +461,16 @@ async fn handle_tick<G: GameServer>(
 
 async fn handle_player_join<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
-    ProtocolJson(req): ProtocolJson<PlayerEventRequest>,
+    ProtocolJson(mut req): ProtocolJson<PlayerEventRequest>,
 ) -> impl IntoResponse {
-    if req.player_id.trim().is_empty() {
+    let Some(resolved_id) = req.resolved_player_id() else {
         return map_error_to_response(SdkError::Validation(
             "playerId must be a non-empty string.".into(),
         ))
         .into_response();
-    }
-    match call_game(state.game.on_player_join(req.player_id, req.state)).await {
+    };
+    req.player_id = resolved_id;
+    match call_game(state.game.on_player_join_ext(req)).await {
         Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
             (StatusCode::OK, Json(res)).into_response()
         }
@@ -407,15 +481,16 @@ async fn handle_player_join<G: GameServer>(
 
 async fn handle_player_leave<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
-    ProtocolJson(req): ProtocolJson<PlayerEventRequest>,
+    ProtocolJson(mut req): ProtocolJson<PlayerEventRequest>,
 ) -> impl IntoResponse {
-    if req.player_id.trim().is_empty() {
+    let Some(resolved_id) = req.resolved_player_id() else {
         return map_error_to_response(SdkError::Validation(
             "playerId must be a non-empty string.".into(),
         ))
         .into_response();
-    }
-    match call_game(state.game.on_player_leave(req.player_id, req.state)).await {
+    };
+    req.player_id = resolved_id;
+    match call_game(state.game.on_player_leave_ext(req)).await {
         Ok(res) if result_units_are_valid(res.result_units.as_deref()) => {
             (StatusCode::OK, Json(res)).into_response()
         }
@@ -428,7 +503,7 @@ async fn handle_is_game_over<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
     ProtocolJson(req): ProtocolJson<IsGameOverRequest>,
 ) -> impl IntoResponse {
-    match call_game(state.game.is_game_over(req.state)).await {
+    match call_game(state.game.is_game_over_ext(req)).await {
         Ok(res) => {
             if !result_units_are_valid(res.result_units.as_deref()) {
                 return invalid_result_units_response();
@@ -484,18 +559,21 @@ async fn handle_fallback(method: Method, uri: Uri) -> impl IntoResponse {
     )
 }
 
-/// Create the Axum router for the room-host protocol.
-///
-/// The returned router can be used in tests or served over TCP.
-pub fn create_game_router<G: GameServer>(game: Arc<G>, game_id: Option<String>) -> Router {
+fn build_router_with_factory<G: GameServer>(
+    game: Arc<G>,
+    stream_factory: Arc<dyn StreamSessionFactory>,
+    game_id: Option<String>,
+) -> Router {
     let app_state = Arc::new(AppState {
         game,
+        stream_factory,
         game_id,
         start_time: Instant::now(),
     });
 
     Router::new()
         .route("/manifest", get(handle_manifest::<G>))
+        .route("/stream", get(handle_stream::<G>))
         .route("/agent/capabilities", get(handle_agent_capabilities::<G>))
         .route(
             "/agent/player-contract",
@@ -514,9 +592,55 @@ pub fn create_game_router<G: GameServer>(game: Arc<G>, game_id: Option<String>) 
         .with_state(app_state)
 }
 
+/// Create the Axum router for the room-host protocol (both HTTP endpoints and `/stream`).
+///
+/// The returned router can be used in tests or served over TCP.
+pub fn create_game_router<G: GameServer>(game: Arc<G>, game_id: Option<String>) -> Router {
+    let factory = Arc::new(ValueStreamFactory(game.clone()));
+    build_router_with_factory(game, factory, game_id)
+}
+
+/// Create the Axum router for a strongly typed [`TypedGameServer`].
+///
+/// Keeps native `T::State` in memory across `/stream` ticks without per-tick
+/// `serde_json::Value` serialization while preserving all 8 HTTP endpoints.
+pub fn create_typed_game_router<T: TypedGameServer>(
+    game: Arc<T>,
+    game_id: Option<String>,
+) -> Router {
+    let adapter = Arc::new(TypedGameAdapter(game.clone()));
+    let factory = Arc::new(TypedStreamFactory(game));
+    build_router_with_factory(adapter, factory, game_id)
+}
+
+/// Create the Axum router pairing a [`GameServer`] for HTTP endpoints with a
+/// zero-`Value` [`TypedGameServer`] session runner for `/stream`.
+pub fn create_game_router_with_stream<G, T>(
+    http_game: Arc<G>,
+    stream_game: Arc<T>,
+    game_id: Option<String>,
+) -> Router
+where
+    G: GameServer,
+    T: TypedGameServer,
+{
+    let factory = Arc::new(TypedStreamFactory(stream_game));
+    build_router_with_factory(http_game, factory, game_id)
+}
+
 /// Start the game server on `0.0.0.0:{port}`.
 pub async fn run_game_server<G: GameServer>(game: G, port: u16) -> Result<(), SdkError> {
     let router = create_game_router(Arc::new(game), None);
+    serve_router_on_port(router, port).await
+}
+
+/// Start a strongly typed [`TypedGameServer`] on `0.0.0.0:{port}`.
+pub async fn run_typed_game_server<T: TypedGameServer>(game: T, port: u16) -> Result<(), SdkError> {
+    let router = create_typed_game_router(Arc::new(game), None);
+    serve_router_on_port(router, port).await
+}
+
+async fn serve_router_on_port(router: Router, port: u16) -> Result<(), SdkError> {
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

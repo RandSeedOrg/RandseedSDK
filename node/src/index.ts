@@ -7,4 +7,5 @@ export * from "./result-units.js";
 export * from "./prng.js";
 export * from "./replay.js";
 export * from "./platform.js";
+export * from "./stream.js";
 export * from "./server.js";

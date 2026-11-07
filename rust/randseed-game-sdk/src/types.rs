@@ -713,7 +713,7 @@ impl Default for MatchOptions {
 }
 
 /// Match configuration passed to `POST /init`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct MatchConfig {
     /// Unique match identifier.
     #[serde(rename = "matchId")]
@@ -736,10 +736,17 @@ pub struct MatchConfig {
     #[serde(
         rename = "tickRateHz",
         default,
-        deserialize_with = "deserialize_optional_tick_rate",
         skip_serializing_if = "Option::is_none"
     )]
     pub tick_rate_hz: Option<f64>,
+}
+
+fn default_game_id() -> String {
+    "default-game".to_string()
+}
+
+fn default_match_seq() -> u64 {
+    1
 }
 
 fn deserialize_optional_tick_rate<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
@@ -747,6 +754,84 @@ where
     D: serde::Deserializer<'de>,
 {
     f64::deserialize(deserializer).map(Some)
+}
+
+impl<'de> Deserialize<'de> for MatchConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawMatchConfig {
+            #[serde(rename = "matchId")]
+            match_id: String,
+            #[serde(rename = "gameId", default = "default_game_id")]
+            game_id: String,
+            players: Vec<serde_json::Value>,
+            #[serde(rename = "matchSeq", default = "default_match_seq")]
+            match_seq: u64,
+            #[serde(default)]
+            options: MatchOptions,
+            #[serde(default)]
+            carryover: Option<serde_json::Value>,
+            #[serde(
+                rename = "tickRateHz",
+                default,
+                deserialize_with = "deserialize_optional_tick_rate"
+            )]
+            tick_rate_hz: Option<f64>,
+            #[serde(default, flatten)]
+            extra: HashMap<String, serde_json::Value>,
+        }
+
+        let mut raw = RawMatchConfig::deserialize(deserializer)?;
+        let mut player_ids = Vec::with_capacity(raw.players.len());
+        let mut has_player_objects = false;
+
+        for entry in &raw.players {
+            match entry {
+                serde_json::Value::String(s) => player_ids.push(s.clone()),
+                serde_json::Value::Object(obj) => {
+                    has_player_objects = true;
+                    let id = obj
+                        .get("id")
+                        .or_else(|| obj.get("playerId"))
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            serde::de::Error::custom(
+                                "player object in players array must contain a string id",
+                            )
+                        })?;
+                    player_ids.push(id.to_string());
+                }
+                _ => {
+                    return Err(serde::de::Error::custom(
+                        "players elements must be strings or player descriptor objects",
+                    ));
+                }
+            }
+        }
+
+        if has_player_objects {
+            raw.options.extra.insert(
+                "playerObjects".to_string(),
+                serde_json::Value::Array(raw.players),
+            );
+        }
+        for (k, v) in raw.extra {
+            raw.options.extra.entry(k).or_insert(v);
+        }
+
+        Ok(MatchConfig {
+            match_id: raw.match_id,
+            game_id: raw.game_id,
+            players: player_ids,
+            match_seq: raw.match_seq,
+            options: raw.options,
+            carryover: raw.carryover,
+            tick_rate_hz: raw.tick_rate_hz,
+        })
+    }
 }
 
 impl MatchConfig {
@@ -807,7 +892,7 @@ impl MatchConfig {
 }
 
 /// One player's input submitted for a simulation tick.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct TickInput {
     /// Player identifier.
     #[serde(rename = "playerId")]
@@ -867,6 +952,58 @@ impl GameActionResult {
     }
 }
 
+impl<'de> Deserialize<'de> for TickInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawTickInput {
+            #[serde(rename = "playerId")]
+            player_id: String,
+            #[serde(default, deserialize_with = "deserialize_present_option")]
+            data: Option<serde_json::Value>,
+            #[serde(default, deserialize_with = "deserialize_present_option")]
+            timestamp: Option<u64>,
+            #[serde(
+                rename = "actionId",
+                default,
+                deserialize_with = "deserialize_present_option"
+            )]
+            action_id: Option<String>,
+            #[serde(
+                rename = "actionSchemaId",
+                default,
+                deserialize_with = "deserialize_present_option"
+            )]
+            action_schema_id: Option<String>,
+            #[serde(default, flatten)]
+            extra: serde_json::Map<String, serde_json::Value>,
+        }
+
+        let raw = RawTickInput::deserialize(deserializer)?;
+        let data = match raw.data {
+            Some(mut val) => {
+                if let serde_json::Value::Object(ref mut map) = val {
+                    for (k, v) in raw.extra {
+                        map.entry(k).or_insert(v);
+                    }
+                }
+                val
+            }
+            None => serde_json::Value::Object(raw.extra),
+        };
+
+        Ok(TickInput {
+            player_id: raw.player_id,
+            data,
+            timestamp: raw.timestamp,
+            action_id: raw.action_id,
+            action_schema_id: raw.action_schema_id,
+        })
+    }
+}
+
 /// A trusted command issued by the room host or an administrator.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GameCommand {
@@ -874,7 +1011,7 @@ pub struct GameCommand {
     #[serde(rename = "type")]
     pub command_type: String,
     /// Optional command data.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "payload", skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
     /// Optional command issuer.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -960,13 +1097,23 @@ impl TickContext {
 }
 
 /// Result returned from match initialization.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct InitResult {
     /// Initial game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(
+        rename = "playerViews",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast when the match starts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
+    /// Whether this active room currently accepts additional players via matchmaking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by initialization.
     #[serde(
         rename = "resultUnits",
@@ -978,15 +1125,25 @@ pub struct InitResult {
 }
 
 /// Result returned after processing one simulation tick.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TickResult {
     /// Updated game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(
+        rename = "playerViews",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
     /// Whether the room host should persist a state snapshot.
     pub persist: bool,
+    /// Optional updated matchmaking joinability flag for this room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by this tick.
     #[serde(
         rename = "resultUnits",
@@ -1005,13 +1162,23 @@ pub struct TickResult {
 }
 
 /// Result returned after a player lifecycle event.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PlayerEventResult {
     /// Updated game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(
+        rename = "playerViews",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
+    /// Optional updated matchmaking joinability flag for this room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by this player event.
     #[serde(
         rename = "resultUnits",
@@ -1035,6 +1202,28 @@ pub struct NextMatchPolicy {
     pub carryover: Option<serde_json::Value>,
 }
 
+fn is_none_or_empty_value(val: &Option<serde_json::Value>) -> bool {
+    match val {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::Object(map)) => map.is_empty(),
+        _ => false,
+    }
+}
+
+fn deserialize_flattened_extra<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let map = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+    if map.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::Value::Object(map)))
+    }
+}
+
 /// Match summary returned when a game ends.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MatchSummary {
@@ -1050,8 +1239,13 @@ pub struct MatchSummary {
     /// Optional game-specific metrics.
     #[serde(rename = "customMetrics", skip_serializing_if = "Option::is_none")]
     pub custom_metrics: Option<serde_json::Value>,
-    /// Optional additional data.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional additional data flattened into the summary object.
+    #[serde(
+        flatten,
+        default,
+        deserialize_with = "deserialize_flattened_extra",
+        skip_serializing_if = "is_none_or_empty_value"
+    )]
     pub extra: Option<serde_json::Value>,
 }
 
@@ -1077,13 +1271,23 @@ pub struct GameResult {
 }
 
 /// Result returned after processing a trusted command.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CommandResult {
     /// Updated game state.
     pub state: serde_json::Value,
+    /// Optional per-player projected state views keyed by `playerId`.
+    #[serde(
+        rename = "playerViews",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub player_views: Option<HashMap<String, serde_json::Value>>,
     /// Optional messages to broadcast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub broadcasts: Option<Vec<serde_json::Value>>,
+    /// Optional updated matchmaking joinability flag for this room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joinable: Option<bool>,
     /// Optional result units emitted by this trusted command.
     #[serde(
         rename = "resultUnits",
@@ -1107,17 +1311,63 @@ pub struct TickRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerEventRequest {
     /// Player identifier.
-    #[serde(rename = "playerId")]
+    #[serde(rename = "playerId", default)]
     pub player_id: String,
     /// Current game state.
     pub state: serde_json::Value,
+    /// Optional flattened extension fields (such as a player profile object).
+    #[serde(default, flatten, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+impl PlayerEventRequest {
+    /// Resolve the effective player ID from top-level `playerId` or `extra["player"]["id"]`.
+    pub fn resolved_player_id(&self) -> Option<String> {
+        if !self.player_id.trim().is_empty() {
+            return Some(self.player_id.clone());
+        }
+        let player_obj = self.extra.get("player")?.as_object()?;
+        let id = player_obj
+            .get("id")
+            .or_else(|| player_obj.get("playerId"))?
+            .as_str()?;
+        if id.trim().is_empty() {
+            None
+        } else {
+            Some(id.to_string())
+        }
+    }
 }
 
 /// Request payload for `POST /isGameOver`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IsGameOverRequest {
     /// Current game state.
     pub state: serde_json::Value,
+    /// Optional additional request parameters (such as `nextMatchPolicy` overrides).
+    #[serde(default, flatten, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for IsGameOverRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut map = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        if let Some(state_val) = map.remove("state") {
+            let extra = map.into_iter().collect();
+            Ok(IsGameOverRequest {
+                state: state_val,
+                extra,
+            })
+        } else {
+            Ok(IsGameOverRequest {
+                state: serde_json::Value::Object(map),
+                extra: HashMap::new(),
+            })
+        }
+    }
 }
 
 /// Request payload for `POST /onCommand`.

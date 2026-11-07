@@ -132,21 +132,27 @@ export interface TickContext<TInput = unknown, TCommand = unknown> {
 
 export interface InitResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
 }
 
 export interface TickResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
   persist: boolean;
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
   actionResults?: GameActionResult[];
 }
 
 export interface PlayerEventResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
 }
 
@@ -175,9 +181,13 @@ export interface GameResult {
 
 export interface CommandResult<TState = unknown> {
   state: TState;
+  playerViews?: Record<string, JsonValue>;
   broadcasts?: unknown[];
+  joinable?: boolean;
   resultUnits?: GameResultEvent[];
 }
+
+export type StreamDurability = "checkpoint" | "strict";
 
 export interface GameServer<TState = unknown, TInput = unknown, TCommand = unknown> {
   agentCapabilities?(): Promise<AgentGameCapabilities | null> | AgentGameCapabilities | null;
@@ -185,6 +195,7 @@ export interface GameServer<TState = unknown, TInput = unknown, TCommand = unkno
   projectAgentPlayerView?(
     request: AgentPlayerViewRequest,
   ): Promise<AgentPlayerViewProjection> | AgentPlayerViewProjection;
+  durability?: StreamDurability | (() => StreamDurability | undefined);
   manifest(): Promise<GameManifest> | GameManifest;
   init(config: MatchConfig): Promise<InitResult<TState>> | InitResult<TState>;
   tick(

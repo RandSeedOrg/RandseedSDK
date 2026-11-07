@@ -311,10 +311,12 @@ impl GameServer for MockGame {
                 "players": config.players,
                 "carryover": config.carryover,
             }),
+            player_views: None,
             broadcasts: Some(vec![json!({
                 "type": "game_initialized",
                 "matchId": config.match_id,
             })]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -342,8 +344,10 @@ impl GameServer for MockGame {
 
         Ok(TickResult {
             state,
+            player_views: None,
             broadcasts,
             persist: is_persist,
+            joinable: None,
             result_units: None,
             action_results: None,
         })
@@ -360,9 +364,11 @@ impl GameServer for MockGame {
         }
         Ok(PlayerEventResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "player_joined", "playerId": player_id }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -377,9 +383,11 @@ impl GameServer for MockGame {
         }
         Ok(PlayerEventResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "player_left", "playerId": player_id }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -448,7 +456,9 @@ impl GameServer for MockGame {
                 serde_json::from_value(fixture["commandResponse"]["resultUnits"].clone()).unwrap();
             return Ok(CommandResult {
                 state,
+                player_views: None,
                 broadcasts: Some(vec![json!({ "type": "counter.reset" })]),
+                joinable: None,
                 result_units: Some(result_units),
             });
         }
@@ -456,9 +466,11 @@ impl GameServer for MockGame {
         state["lastCommand"] = json!(cmd);
         Ok(CommandResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "command_executed", "cmdType": cmd.command_type }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -1311,4 +1323,141 @@ async fn test_platform_client_custom_mock() {
 
     let val = client.kv_get("key1").await.unwrap();
     assert_eq!(val, Some(json!("val1")));
+}
+
+#[test]
+fn extensible_protocol_structures_preserve_and_flatten_custom_fields() {
+    let config_json = json!({
+        "matchId": "ext-match-1",
+        "players": [
+            { "id": "p1", "name": "Alice", "skinId": "neon" },
+            "p2"
+        ],
+        "options": { "seed": 42.0 },
+        "customMode": "arena"
+    });
+    let config: MatchConfig = serde_json::from_value(config_json).unwrap();
+    config.validate().unwrap();
+    assert_eq!(config.players, vec!["p1".to_string(), "p2".to_string()]);
+    assert_eq!(
+        config.options.extra.get("customMode"),
+        Some(&json!("arena"))
+    );
+    assert!(config.options.extra.get("playerObjects").is_some());
+
+    let flat_input: randseed_game_sdk::TickInput = serde_json::from_value(json!({
+        "playerId": "p1",
+        "targetAngle": 1.25,
+        "isBoosting": true
+    }))
+    .unwrap();
+    assert_eq!(flat_input.player_id, "p1");
+    assert_eq!(flat_input.data["targetAngle"], json!(1.25));
+    assert_eq!(flat_input.data["isBoosting"], json!(true));
+
+    let join_req: randseed_game_sdk::PlayerEventRequest = serde_json::from_value(json!({
+        "player": { "id": "p-join", "name": "Bob" },
+        "state": { "ok": true }
+    }))
+    .unwrap();
+    assert_eq!(join_req.resolved_player_id(), Some("p-join".to_string()));
+
+    let summary = MatchSummary {
+        winner_player_id: Some("p1".to_string()),
+        scores: None,
+        duration_seconds: 180.0,
+        custom_metrics: None,
+        extra: Some(json!({ "leaderboard": [{ "id": "p1", "rank": 1 }] })),
+    };
+    let summary_json = serde_json::to_value(&summary).unwrap();
+    assert_eq!(summary_json["leaderboard"][0]["id"], "p1");
+
+    let joinable_init = InitResult {
+        state: json!({ "phase": "matching" }),
+        player_views: Some(HashMap::from([(
+            "p1".to_string(),
+            json!({ "phase": "matching", "viewer": "p1" }),
+        )])),
+        broadcasts: None,
+        joinable: Some(true),
+        result_units: None,
+    };
+    let joinable_json = serde_json::to_value(&joinable_init).unwrap();
+    assert_eq!(joinable_json["joinable"], json!(true));
+    assert_eq!(joinable_json["playerViews"]["p1"]["viewer"], json!("p1"));
+    let decoded_init: InitResult = serde_json::from_value(joinable_json).unwrap();
+    assert_eq!(decoded_init.joinable, Some(true));
+    assert_eq!(
+        decoded_init
+            .player_views
+            .as_ref()
+            .and_then(|views| views.get("p1")),
+        Some(&json!({ "phase": "matching", "viewer": "p1" }))
+    );
+
+    let closed_tick = TickResult {
+        state: json!({ "phase": "playing" }),
+        joinable: Some(false),
+        ..Default::default()
+    };
+    let closed_tick_json = serde_json::to_value(&closed_tick).unwrap();
+    assert_eq!(closed_tick_json["joinable"], json!(false));
+    assert!(closed_tick_json.get("playerViews").is_none());
+    assert!(closed_tick_json.get("actionResults").is_none());
+}
+
+#[test]
+fn tick_input_deserializes_action_fields_without_polluting_data_and_rejects_nulls() {
+    let structured: TickInput = serde_json::from_value(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "timestamp": 42,
+        "actionId": "act-1",
+        "actionSchemaId": "counter.move.v1"
+    }))
+    .unwrap();
+    assert_eq!(structured.player_id, "p1");
+    assert_eq!(structured.timestamp, Some(42));
+    assert_eq!(structured.action_id.as_deref(), Some("act-1"));
+    assert_eq!(
+        structured.action_schema_id.as_deref(),
+        Some("counter.move.v1")
+    );
+    assert_eq!(structured.data, json!({ "move": "up" }));
+
+    let flattened: TickInput = serde_json::from_value(json!({
+        "playerId": "p2",
+        "dx": 1,
+        "dy": -1,
+        "actionId": "act-2",
+        "actionSchemaId": "counter.move.v1"
+    }))
+    .unwrap();
+    assert_eq!(flattened.player_id, "p2");
+    assert_eq!(flattened.action_id.as_deref(), Some("act-2"));
+    assert_eq!(
+        flattened.action_schema_id.as_deref(),
+        Some("counter.move.v1")
+    );
+    assert_eq!(flattened.data, json!({ "dx": 1, "dy": -1 }));
+
+    let null_action_id = serde_json::from_value::<TickInput>(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "actionId": null
+    }));
+    assert!(
+        null_action_id.is_err(),
+        "explicit null actionId must fail deserialization"
+    );
+
+    let null_schema_id = serde_json::from_value::<TickInput>(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "actionSchemaId": null
+    }));
+    assert!(
+        null_schema_id.is_err(),
+        "explicit null actionSchemaId must fail deserialization"
+    );
 }

@@ -19,6 +19,11 @@ import {
 } from "./agent-player-view.js";
 import { validateGameResultUnits } from "./result-units.js";
 import {
+  attachStreamUpgradeHandler,
+  resolveStreamDurability,
+  STREAM_PROTOCOL_V1,
+} from "./stream.js";
+import {
   isRecord,
   validateGameCommand,
   validateGameManifest,
@@ -178,6 +183,17 @@ function validateStateResult(value: unknown): void {
     throw new Error("Game callback result must contain state.");
   }
   validateJsonValue(value);
+  if (Object.hasOwn(value, "playerViews") && value.playerViews !== undefined) {
+    if (!isRecord(value.playerViews)) {
+      throw new Error("playerViews must be an object keyed by playerId when provided.");
+    }
+    for (const [playerId, view] of Object.entries(value.playerViews)) {
+      if (playerId.trim().length === 0) {
+        throw new Error("playerViews keys must be non-empty playerId strings.");
+      }
+      validateJsonValue(view);
+    }
+  }
   if (Object.hasOwn(value, "broadcasts")) {
     if (!Array.isArray(value.broadcasts)) {
       throw new Error("broadcasts must be an array when provided.");
@@ -258,7 +274,12 @@ function validateGameResult(value: unknown): asserts value is {
   }
 }
 
-function sendJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
+function sendJson(
+  res: http.ServerResponse,
+  statusCode: number,
+  body: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
   const payload = JSON.stringify(body);
   if (payload === undefined) {
     throw new Error("Response is not JSON serializable.");
@@ -266,6 +287,7 @@ function sendJson(res: http.ServerResponse, statusCode: number, body: unknown): 
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload, "utf8"),
+    ...extraHeaders,
   });
   res.end(payload);
 }
@@ -357,7 +379,14 @@ export function createGameServer(
       if (method === "GET" && pathname === "/manifest") {
         const manifest = await game.manifest();
         validateGameManifest(manifest);
-        sendJson(res, 200, manifest);
+        const durability = resolveStreamDurability(game);
+        const headers: Record<string, string> = {
+          "X-RandSeed-Stream-Protocol": STREAM_PROTOCOL_V1,
+        };
+        if (durability) {
+          headers["X-RandSeed-Stream-Durability"] = durability;
+        }
+        sendJson(res, 200, manifest, headers);
         return;
       }
 
@@ -434,6 +463,7 @@ export function createGameServer(
     }
   });
 
+  attachStreamUpgradeHandler(server, game);
   server.listen(port);
   return server;
 }

@@ -13,6 +13,7 @@ pub mod platform;
 pub mod prng;
 pub mod replay;
 pub mod server;
+pub mod stream;
 pub mod types;
 
 // Re-export the primary public traits, types, and functions.
@@ -35,7 +36,15 @@ pub use replay::{
     evaluate_replay_storage_tier, validate_replay_data_v2, ReplayCommandItem, ReplayDataV2,
     ReplayInputItem, ReplayStorageTier, TIER_A_MAX_COMPRESSED_BYTES, TIER_B_MAX_COMPRESSED_BYTES,
 };
-pub use server::{create_game_router, run_game_server, GameServer};
+pub use server::{
+    create_game_router, create_game_router_with_stream, create_typed_game_router, run_game_server,
+    run_typed_game_server, GameServer,
+};
+pub use stream::{
+    ManifestCapabilities, ManifestWireResponse, StreamClientMessage, StreamDurability,
+    StreamReplayStep, StreamServerMessage, StreamStepEvent, TypedEventOutcome, TypedGameAdapter,
+    TypedGameServer, TypedInitResult, TypedTickResult, STREAM_PROTOCOL_V1,
+};
 pub use types::{
     validate_game_result_units, CommandRequest, CommandResult, GameActionOutcome, GameActionResult,
     GameCommand, GameManifest, GameMetricAggregation, GameMetricDefinition, GameResult,

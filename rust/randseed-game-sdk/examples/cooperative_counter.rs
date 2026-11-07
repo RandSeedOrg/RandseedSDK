@@ -50,7 +50,9 @@ impl GameServer for CooperativeCounter {
                 "count": count,
                 "players": config.players,
             }),
+            player_views: None,
             broadcasts: Some(vec![json!({ "type": "counter.started", "count": count })]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -129,8 +131,10 @@ impl GameServer for CooperativeCounter {
 
         Ok(TickResult {
             state,
+            player_views: None,
             broadcasts,
             persist: !result_units.is_empty(),
+            joinable: None,
             result_units: (!result_units.is_empty()).then_some(result_units),
             action_results: None,
         })
@@ -156,9 +160,11 @@ impl GameServer for CooperativeCounter {
 
         Ok(PlayerEventResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "player_joined", "playerId": player_id }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -178,9 +184,11 @@ impl GameServer for CooperativeCounter {
 
         Ok(PlayerEventResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![
                 json!({ "type": "player_left", "playerId": player_id }),
             ]),
+            joinable: None,
             result_units: None,
         })
     }
@@ -230,7 +238,9 @@ impl GameServer for CooperativeCounter {
         state["count"] = json!(0);
         Ok(CommandResult {
             state,
+            player_views: None,
             broadcasts: Some(vec![json!({ "type": "counter.reset" })]),
+            joinable: None,
             result_units: None,
         })
     }
