@@ -1,0 +1,30 @@
+{
+  "repositoryUrl": "https://github.com/RandSeedOrg/RandseedSDK",
+  "badge": "Node.js: GitHub | Other languages: GitHub",
+  "summary": "The Node.js server SDK and the Go, Rust, C#, and C++ SDK sources are maintained in the public RandseedSDK repository. The browser-only @randseed/game-sdk is a separate npm package.",
+  "node": {
+    "heading": "Node.js SDK (GitHub)",
+    "installCommand": "npm install github:RandSeedOrg/RandseedSDK#main",
+    "installGuidance": "Pin a reviewed tag or commit instead of main for reproducible builds.",
+    "requirements": "Node.js 20+ and ESM are required; JavaScript works directly, and TypeScript is optional."
+  },
+  "otherLanguagesHeading": "Other backend SDKs",
+  "languages": [
+    {
+      "name": "Go",
+      "path": "go"
+    },
+    {
+      "name": "Rust",
+      "path": "rust"
+    },
+    {
+      "name": "C#",
+      "path": "dotnet"
+    },
+    {
+      "name": "C++",
+      "path": "cpp"
+    }
+  ]
+}
