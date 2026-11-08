@@ -20,6 +20,15 @@ repository. The Node package is installed from this GitHub repository, not
 from the npm registry. The browser-only SDK remains published on npm as
 [`@randseed/game-sdk`](https://www.npmjs.com/package/@randseed/game-sdk).
 
+The Creator Portal's server SDK summary is sourced from
+[`metadata/gamecreator-server-sdk-guide.json`](./metadata/gamecreator-server-sdk-guide.json).
+On each push to `main`, this repository uses short-lived GitHub Actions OIDC to
+notify the matching dev, test, and production Creator Workers. Each Worker
+verifies its environment-specific audience and source workflow, then uses its
+own GitHub App to notify Gamecreator. Gamecreator fetches the guide data and
+opens a pull request only when the displayed data changes. No PAT is stored in
+this repository.
+
 ## Room-host protocol
 
 All server SDKs implement the same HTTP/JSON lifecycle contract:

@@ -1,0 +1,38 @@
+name: Notify Gamecreator about SDK guide updates
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  notify-gamecreator:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - environment: dev
+            api_url: https://devcreator.randseed.org
+            audience: randseed-gamecreator
+          - environment: test
+            api_url: https://testcreator.randseed.org
+            audience: randseed-gamecreator-test
+          - environment: production
+            api_url: https://creator.randseed.org
+            audience: randseed-gamecreator-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Notify the ${{ matrix.target.environment }} Creator Worker with GitHub Actions OIDC
+        env:
+          API_URL: ${{ matrix.target.api_url }}
+          OIDC_AUDIENCE: ${{ matrix.target.audience }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/notify-gamecreator-guide.mjs
