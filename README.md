@@ -5,15 +5,17 @@ protocol, examples, and cross-language compatibility fixtures. It does not
 contain RandSeed's private platform services, Durable Objects, authentication,
 or deployment implementation.
 
-## Supported server languages
+## Supported server languages & Fixed Runtimes
 
-| Language | SDK location | Install and verify |
-| --- | --- | --- |
-| Node.js / TypeScript | [`node/`](./node/) | Consumer install: `npm install github:RandSeedOrg/RandseedSDK#main`; repository checks: `npm ci && npm test` |
-| Go | [`go/`](./go/) | `go get github.com/randseedorg/randseedsdk/go/roomhost@v0.1.0`; `go test ./...` |
-| Rust | [`rust/`](./rust/) | Use the path dependency and checks in the [crate README](./rust/randseed-game-sdk/README.md). |
-| C# | [`dotnet/`](./dotnet/) | `dotnet run --project dotnet/verification` |
-| C++ | [`cpp/`](./cpp/) | See the CMake build instructions in [`cpp/README.md`](./cpp/README.md). |
+| Language | SDK location | `backend.runtime` | Install and verify |
+| --- | --- | --- | --- |
+| Node.js / TypeScript | [`node/`](./node/) | `nodejs-22` / `nodejs-24` | Consumer install: `npm install github:RandSeedOrg/RandseedSDK#main`; repository checks: `npm ci && npm test` |
+| Go | [`go/`](./go/) | `go` (shared `native` image) | `go get github.com/randseedorg/randseedsdk/go/roomhost@v0.1.0`; `go test ./...` |
+| Rust | [`rust/`](./rust/) | `rust` (shared `native` image) | Use the path dependency and checks in the [crate README](./rust/randseed-game-sdk/README.md). |
+| C# | [`dotnet/`](./dotnet/) | `dotnet-8` | `dotnet run --project dotnet/verification` |
+| C++ | [`cpp/`](./cpp/) | `cpp` (shared `native` image) | See the CMake build instructions in [`cpp/README.md`](./cpp/README.md). |
+
+Full-stack games declare `backend.runtime` (`rust`, `go`, `cpp`, `nodejs-22`, `nodejs-24`, or `dotnet-8`) and `backend.entrypoint` in `randseed.fullstack.json` and package their compiled Linux `x86_64` binary or single-file ESM bundle into `code.tar.gz` (`r2://runtime-packages/<gameId>/sha256-<sha256>.tar.gz`). The platform Play Worker mounts fixed base runtime images and executes the uploaded package inside an isolated non-root container without per-game Docker image builds or Worker redeployments.
 
 The Node.js server SDK source and other backend SDKs are maintained in this
 repository. The Node package is installed from this GitHub repository, not

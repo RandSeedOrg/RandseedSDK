@@ -6,7 +6,7 @@
     "heading": "Node.js SDK (GitHub)",
     "installCommand": "npm install github:RandSeedOrg/RandseedSDK#main",
     "installGuidance": "Pin a reviewed tag or commit instead of main for reproducible builds.",
-    "requirements": "Node.js 20+ and ESM are required; JavaScript works directly, and TypeScript is optional."
+    "requirements": "Target fixed runtime nodejs-22 or nodejs-24 in randseed.fullstack.json and bundle the room server into a single ESM entrypoint for code.tar.gz."
   },
   "otherLanguagesHeading": "Other backend SDKs",
   "languages": [
