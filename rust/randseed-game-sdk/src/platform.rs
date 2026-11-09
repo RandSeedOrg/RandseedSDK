@@ -16,6 +16,16 @@ pub struct PlayerInfo {
     /// Connection time in epoch milliseconds.
     #[serde(rename = "joinedAt")]
     pub joined_at: u64,
+    /// Public display name supplied by the platform, when available.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "displayName"
+    )]
+    pub display_name: Option<String>,
+    /// Platform-hosted avatar resource for the public profile, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "avatarUrl")]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

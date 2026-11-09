@@ -1266,7 +1266,17 @@ async fn test_platform_client_custom_mock() {
             axum::routing::get(|| async {
                 (
                     axum::http::StatusCode::OK,
-                    axum::Json(json!({ "players": [{ "playerId": "p1", "joinedAt": 1000 }] })),
+                    axum::Json(json!({
+                        "players": [
+                            {
+                                "playerId": "p1",
+                                "joinedAt": 1000,
+                                "displayName": "Player One",
+                                "avatarUrl": "https://game.example/api/public/profile-avatar?name=Player%20One"
+                            },
+                            { "playerId": "p2", "joinedAt": 2000 }
+                        ]
+                    })),
                 )
             }),
         )
@@ -1318,8 +1328,15 @@ async fn test_platform_client_custom_mock() {
     assert!(s_deliv);
 
     let players = client.get_players().await.unwrap();
-    assert_eq!(players.len(), 1);
+    assert_eq!(players.len(), 2);
     assert_eq!(players[0].player_id, "p1");
+    assert_eq!(players[0].display_name.as_deref(), Some("Player One"));
+    assert_eq!(
+        players[0].avatar_url.as_deref(),
+        Some("https://game.example/api/public/profile-avatar?name=Player%20One")
+    );
+    assert_eq!(players[1].display_name, None);
+    assert_eq!(players[1].avatar_url, None);
 
     let val = client.kv_get("key1").await.unwrap();
     assert_eq!(val, Some(json!("val1")));

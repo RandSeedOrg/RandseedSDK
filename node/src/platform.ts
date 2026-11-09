@@ -93,7 +93,12 @@ export class PlatformClient {
     };
   }
 
-  async getPlayers(): Promise<Array<{ playerId: string; joinedAt: number }>> {
+  async getPlayers(): Promise<Array<{
+    playerId: string;
+    joinedAt: number;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+  }>> {
     const response = await this.customFetch(this.resolveUrl("platform.players", "/"), {
       method: "GET",
     });

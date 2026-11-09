@@ -84,6 +84,11 @@ retries; corrections are append-only events.
 - `PlatformClient` calls host services; do not make those calls a source of
   unrecorded authoritative simulation inputs.
 
+`PlatformClient::get_players()` includes optional `display_name` and
+`avatar_url` values for online room members when a public profile is available.
+The platform resolves these fields from each authenticated room session; they
+are display data, not authorization evidence.
+
 Run the crate checks from this directory:
 
 ```sh
