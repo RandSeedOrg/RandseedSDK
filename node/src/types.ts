@@ -235,6 +235,8 @@ export interface PlatformPlayersResponse {
   players: Array<{
     playerId: string;
     joinedAt: number;
+    displayName?: string | null;
+    avatarUrl?: string | null;
   }>;
 }
 
