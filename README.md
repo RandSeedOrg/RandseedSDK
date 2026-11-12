@@ -40,6 +40,8 @@ this repository.
 - **Per-seat private views and action receipts** in Node.js and Rust, with
   fail-closed roster coverage and no fallback to canonical state.
 - **Versioned Result Units and metrics** for round, stage, and match outcomes.
+- **Structured failures** in Node.js and Rust with stable error codes,
+  retryability, and sanitized callback errors.
 - **Optional Agent contracts** for capability discovery and recipient-specific
   player views in Node.js and Rust.
 - **Host-mediated room services** in Node.js and Rust through `PlatformClient`:
@@ -51,7 +53,7 @@ All server SDKs implement the shared HTTP/JSON room lifecycle:
 
 | Interface | Capability |
 | --- | --- |
-| `GET /manifest` | Game metadata, options schema, supported features, and Result Unit definitions. |
+| `GET /manifest` | Game metadata, options schema, player-view mode, and Result Unit definitions. |
 | `GET /health` | Server health and runtime identity. |
 | `POST /init` | Initialize a match from host-authenticated players and options. |
 | `POST /tick` | Apply one authoritative tick of player inputs and trusted commands. |

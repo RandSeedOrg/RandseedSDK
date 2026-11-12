@@ -27,6 +27,10 @@
       "description": "Versioned Result Units represent round, stage, team, participant, and match outcomes with declared metrics."
     },
     {
+      "name": "Structured failures",
+      "description": "Node.js and Rust report stable error codes, retryability, and sanitized callback failures."
+    },
+    {
       "name": "Agent integration",
       "description": "Optional Node.js and Rust interfaces expose Agent capabilities and trusted, recipient-specific player views."
     },
@@ -40,7 +44,7 @@
     {
       "group": "Room lifecycle",
       "routes": [
-        { "name": "GET /manifest", "description": "Game metadata, options schema, and supported result definitions." },
+        { "name": "GET /manifest", "description": "Game metadata, options schema, player-view mode, and Result Unit definitions." },
         { "name": "GET /health", "description": "Container health and runtime identity." },
         { "name": "POST /init", "description": "Initialize a match from host-provided players and options." },
         { "name": "POST /tick", "description": "Apply one authoritative tick of player inputs and commands." },
