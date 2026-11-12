@@ -952,6 +952,39 @@ impl GameActionResult {
     }
 }
 
+pub(crate) fn validate_action_results_contract(
+    action_results: Option<&[GameActionResult]>,
+    expected_action_ids: &[String],
+) -> Result<(), SdkError> {
+    let expected: HashSet<&str> = expected_action_ids.iter().map(String::as_str).collect();
+    let invalid_result =
+        || SdkError::Internal("Game server returned invalid or incomplete action results.".into());
+    if expected.len() != expected_action_ids.len() {
+        return Err(invalid_result());
+    }
+
+    let Some(action_results) = action_results else {
+        return if expected.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid_result())
+        };
+    };
+    let mut received = HashSet::new();
+    for result in action_results {
+        if result.validate().is_err()
+            || !expected.contains(result.action_id.as_str())
+            || !received.insert(result.action_id.as_str())
+        {
+            return Err(invalid_result());
+        }
+    }
+    if received != expected {
+        return Err(invalid_result());
+    }
+    Ok(())
+}
+
 impl<'de> Deserialize<'de> for TickInput {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1049,6 +1082,7 @@ impl TickContext {
                 "elapsedSeconds must be a finite, non-negative number.".into(),
             ));
         }
+        let mut action_ids = HashSet::new();
         for item in &self.inputs {
             if item.player_id.trim().is_empty() {
                 return Err(SdkError::Validation(
@@ -1080,6 +1114,13 @@ impl TickContext {
                 return Err(SdkError::Validation(
                     "input action identifiers are invalid.".into(),
                 ));
+            }
+            if let Some(action_id) = item.action_id.as_deref() {
+                if !action_ids.insert(action_id) {
+                    return Err(SdkError::Validation(
+                        "input actionId values must be unique within a tick.".into(),
+                    ));
+                }
             }
         }
         for command in &self.commands {
@@ -1367,6 +1408,52 @@ impl<'de> Deserialize<'de> for IsGameOverRequest {
                 extra: HashMap::new(),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod action_result_contract_tests {
+    use super::{validate_action_results_contract, GameActionOutcome, GameActionResult};
+
+    #[test]
+    fn action_results_must_match_each_unique_input_action_id() {
+        let expected = vec!["act-1".to_string(), "act-2".to_string()];
+        let valid = vec![
+            GameActionResult {
+                action_id: "act-1".into(),
+                status: GameActionOutcome::Applied,
+                code: None,
+            },
+            GameActionResult {
+                action_id: "act-2".into(),
+                status: GameActionOutcome::Rejected,
+                code: Some("not_your_turn".into()),
+            },
+        ];
+        assert!(validate_action_results_contract(Some(&valid), &expected).is_ok());
+        assert!(validate_action_results_contract(None, &expected).is_err());
+        assert!(validate_action_results_contract(Some(&valid[..1]), &expected).is_err());
+
+        let unknown = [GameActionResult {
+            action_id: "act-other".into(),
+            status: GameActionOutcome::Applied,
+            code: None,
+        }];
+        assert!(validate_action_results_contract(Some(&unknown), &expected).is_err());
+
+        let duplicate = [valid[0].clone(), valid[0].clone()];
+        assert!(validate_action_results_contract(Some(&duplicate), &expected[..1]).is_err());
+    }
+
+    #[test]
+    fn action_results_without_action_inputs_are_rejected() {
+        let result = [GameActionResult {
+            action_id: "act-1".into(),
+            status: GameActionOutcome::Applied,
+            code: None,
+        }];
+        assert!(validate_action_results_contract(Some(&result), &[]).is_err());
+        assert!(validate_action_results_contract(Some(&[]), &[]).is_ok());
     }
 }
 

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
 import type {
+  GameActionResult,
   GameCommand,
   GameResult,
   GameResultEvent,
@@ -11,6 +12,15 @@ import type {
   TickInput,
 } from "./types.js";
 import { validateGameResultUnits } from "./result-units.js";
+import {
+  isRecord,
+  validateGameCommand,
+  validateGameResult,
+  validateJsonValue,
+  validateStateResult,
+  validateTickContext,
+  validateTickResult,
+} from "./validators.js";
 
 export const STREAM_PROTOCOL_V1 = "session-v1";
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -63,6 +73,101 @@ export interface StepMessage {
   wantState?: boolean;
 }
 
+export interface StreamErrorMessage {
+  type: "error";
+  tick?: number;
+  code: "VALIDATION_ERROR" | "INTERNAL_ERROR";
+  error: string;
+}
+
+export interface StreamHydratedMessage {
+  type: "hydrated";
+  matchId: string;
+  tick: number;
+  state?: unknown;
+  playerViews?: Record<string, JsonValue>;
+  broadcasts?: JsonValue[];
+  joinable?: boolean;
+  resultUnits?: GameResultEvent[];
+  actionResults?: GameActionResult[];
+  gameResult: GameResult;
+}
+
+export interface StreamStepResultMessage {
+  type: "stepResult";
+  tick: number;
+  state?: unknown;
+  playerViews?: Record<string, JsonValue>;
+  broadcasts: JsonValue[];
+  persist: boolean;
+  joinable?: boolean;
+  resultUnits?: GameResultEvent[];
+  actionResults?: GameActionResult[];
+  gameResult: GameResult;
+}
+
+export type StreamServerMessage =
+  | StreamErrorMessage
+  | StreamHydratedMessage
+  | StreamStepResultMessage
+  | { type: "ignoredAfterGameOver"; tick: number };
+
+class StreamValidationError extends Error {}
+
+function validateStreamEvents(value: unknown): asserts value is StreamStepEvent[] {
+  if (!Array.isArray(value)) {
+    throw new StreamValidationError("events must be an array.");
+  }
+  for (const event of value) {
+    if (!isRecord(event) || typeof event.type !== "string") {
+      throw new StreamValidationError("Each stream event must be an object with a type.");
+    }
+    if (event.type === "join" || event.type === "leave") {
+      if (typeof event.playerId !== "string" || event.playerId.trim().length === 0) {
+        throw new StreamValidationError("playerId must be non-empty.");
+      }
+    } else if (event.type === "command") {
+      try {
+        validateGameCommand(event.command);
+      } catch (error) {
+        throw new StreamValidationError(error instanceof Error ? error.message : "Invalid stream command.");
+      }
+    } else {
+      throw new StreamValidationError(`Unsupported stream event type: ${event.type}`);
+    }
+  }
+}
+
+function validateStreamInputs(
+  tickRateHz: number,
+  tick: number,
+  value: unknown,
+): asserts value is TickInput[] {
+  if (!Array.isArray(value)) {
+    throw new StreamValidationError("inputs must be an array.");
+  }
+  try {
+    validateTickContext({
+      tick,
+      elapsedSeconds: tick / tickRateHz,
+      inputs: value,
+      commands: [],
+    });
+  } catch (error) {
+    throw new StreamValidationError(error instanceof Error ? error.message : "Invalid tick inputs.");
+  }
+}
+
+function validateResyncPlayers(value: unknown): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value)
+      || value.some(playerId => typeof playerId !== "string" || playerId.trim().length === 0))
+  ) {
+    throw new StreamValidationError("resyncPlayers must be an array of non-empty player IDs.");
+  }
+}
+
 function encodeWsFrame(opcode: number, payload: Buffer): Buffer {
   const len = payload.length;
   let header: Buffer;
@@ -105,6 +210,7 @@ async function applySingleStep<TState>(
   playerViews?: Record<string, JsonValue>;
   resultUnits: GameResultEvent[];
   gameResult: GameResult;
+  actionResults?: GameActionResult[];
 }> {
   let state = curState;
   const broadcasts: JsonValue[] = [];
@@ -112,38 +218,32 @@ async function applySingleStep<TState>(
   let joinable: boolean | undefined;
   let playerViews: Record<string, JsonValue> | undefined;
 
+  validateStreamEvents(events);
+  validateStreamInputs(tickRateHz, tick, inputs);
+
   for (const ev of events) {
     if (ev.type === "join") {
-      if (typeof ev.playerId !== "string" || ev.playerId.trim().length === 0) {
-        throw new StreamValidationError("playerId must be non-empty.");
-      }
       const res = await game.onPlayerJoin(ev.playerId, state);
-      validateGameResultUnits(res.resultUnits);
+      validateStateResult(res);
       state = res.state;
       if (res.broadcasts) broadcasts.push(...(res.broadcasts as JsonValue[]));
       if (res.resultUnits) resultUnits.push(...res.resultUnits);
       if (res.joinable !== undefined) joinable = res.joinable;
       if (res.playerViews !== undefined) playerViews = res.playerViews as Record<string, JsonValue>;
     } else if (ev.type === "leave") {
-      if (typeof ev.playerId !== "string" || ev.playerId.trim().length === 0) {
-        throw new StreamValidationError("playerId must be non-empty.");
-      }
       const res = await game.onPlayerLeave(ev.playerId, state);
-      validateGameResultUnits(res.resultUnits);
+      validateStateResult(res);
       state = res.state;
       if (res.broadcasts) broadcasts.push(...(res.broadcasts as JsonValue[]));
       if (res.resultUnits) resultUnits.push(...res.resultUnits);
       if (res.joinable !== undefined) joinable = res.joinable;
       if (res.playerViews !== undefined) playerViews = res.playerViews as Record<string, JsonValue>;
     } else if (ev.type === "command") {
-      if (!ev.command || typeof ev.command.type !== "string" || ev.command.type.trim().length === 0) {
-        throw new StreamValidationError("command.type must be a non-empty string.");
-      }
       if (typeof game.onCommand !== "function") {
         throw new Error("The onCommand handler is not implemented.");
       }
       const res = await game.onCommand(ev.command, state);
-      validateGameResultUnits(res.resultUnits);
+      validateStateResult(res);
       state = res.state;
       if (res.broadcasts) broadcasts.push(...(res.broadcasts as JsonValue[]));
       if (res.resultUnits) resultUnits.push(...res.resultUnits);
@@ -161,7 +261,7 @@ async function applySingleStep<TState>(
     },
     state,
   );
-  validateGameResultUnits(tickRes.resultUnits);
+  validateTickResult(tickRes, inputs);
   state = tickRes.state;
   if (tickRes.broadcasts) broadcasts.push(...(tickRes.broadcasts as JsonValue[]));
   if (tickRes.resultUnits) resultUnits.push(...tickRes.resultUnits);
@@ -169,7 +269,7 @@ async function applySingleStep<TState>(
   if (tickRes.playerViews !== undefined) playerViews = tickRes.playerViews as Record<string, JsonValue>;
 
   const gameResult = { ...(await game.isGameOver(state)) };
-  validateGameResultUnits(gameResult.resultUnits);
+  validateGameResult(gameResult);
   if (gameResult.resultUnits) {
     resultUnits.push(...gameResult.resultUnits);
     delete gameResult.resultUnits;
@@ -177,19 +277,19 @@ async function applySingleStep<TState>(
   if (gameResult.over && joinable !== undefined) {
     joinable = false;
   }
+  validateGameResultUnits(resultUnits);
 
   return {
     state,
     broadcasts,
-    persist: Boolean(tickRes.persist),
+    persist: tickRes.persist,
     joinable,
     playerViews,
     resultUnits,
     gameResult,
+    actionResults: tickRes.actionResults,
   };
 }
-
-class StreamValidationError extends Error {}
 
 class NodeStreamSession<TState = unknown> {
   private tickRateHz = 20;
@@ -200,7 +300,7 @@ class NodeStreamSession<TState = unknown> {
 
   constructor(private readonly game: GameServer<TState>) {}
 
-  async handleMessage(raw: unknown): Promise<Record<string, unknown>> {
+  async handleMessage(raw: unknown): Promise<StreamServerMessage> {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return { type: "error", code: "VALIDATION_ERROR", error: "Stream message must be an object." };
     }
@@ -214,9 +314,13 @@ class NodeStreamSession<TState = unknown> {
         msg.tickRateHz < 1 ||
         msg.tickRateHz > 60 ||
         typeof msg.tick !== "number" ||
-        !Number.isInteger(msg.tick) ||
+        !Number.isSafeInteger(msg.tick) ||
         msg.tick < 0 ||
-        msg.state === undefined
+        msg.state === undefined ||
+        (Object.hasOwn(msg, "replay") && !Array.isArray(msg.replay)) ||
+        (Object.hasOwn(msg, "resyncPlayers")
+          && (!Array.isArray(msg.resyncPlayers)
+            || msg.resyncPlayers.some(playerId => typeof playerId !== "string" || playerId.trim().length === 0)))
       ) {
         return {
           type: "error",
@@ -230,19 +334,41 @@ class NodeStreamSession<TState = unknown> {
       let curState = hydrate.state as TState;
       const broadcasts: JsonValue[] = [];
       const resultUnits: GameResultEvent[] = [];
+      const actionResults: GameActionResult[] = [];
       let joinable: boolean | undefined;
       let lastViews: Record<string, JsonValue> | undefined;
-      const replay = Array.isArray(hydrate.replay) ? hydrate.replay : [];
+      const replay = hydrate.replay ?? [];
 
       try {
+        try {
+          validateJsonValue(curState);
+        } catch (error) {
+          throw new StreamValidationError(error instanceof Error ? error.message : "Invalid hydrated state.");
+        }
         let gameResult = { ...(await this.game.isGameOver(curState)) };
-        validateGameResultUnits(gameResult.resultUnits);
+        validateGameResult(gameResult);
         if (gameResult.resultUnits) {
           resultUnits.push(...gameResult.resultUnits);
           delete gameResult.resultUnits;
         }
-        for (const step of replay) {
+        validateResyncPlayers(hydrate.resyncPlayers);
+        for (const rawStep of replay as unknown[]) {
           if (gameResult.over) break;
+          if (
+            !isRecord(rawStep)
+            || typeof rawStep.tick !== "number"
+            || !Number.isSafeInteger(rawStep.tick)
+            || rawStep.tick < 0
+            || (Object.hasOwn(rawStep, "inputs") && !Array.isArray(rawStep.inputs))
+            || (Object.hasOwn(rawStep, "events") && !Array.isArray(rawStep.events))
+          ) {
+            throw new StreamValidationError("Invalid replay step.");
+          }
+          const step = rawStep as unknown as StreamReplayStep;
+          const inputs = step.inputs ?? [];
+          const events = step.events ?? [];
+          validateStreamInputs(hydrate.tickRateHz, step.tick, inputs);
+          validateStreamEvents(events);
           if (step.tick !== curTick + 1) {
             return {
               type: "error",
@@ -256,13 +382,14 @@ class NodeStreamSession<TState = unknown> {
             hydrate.tickRateHz,
             curState,
             step.tick,
-            step.inputs ?? [],
-            step.events ?? [],
+            inputs,
+            events,
           );
           curTick = step.tick;
           curState = out.state;
           broadcasts.push(...out.broadcasts);
           resultUnits.push(...out.resultUnits);
+          if (out.actionResults) actionResults.push(...out.actionResults);
           if (out.joinable !== undefined) joinable = out.joinable;
           lastViews = out.playerViews;
           gameResult = out.gameResult;
@@ -281,6 +408,7 @@ class NodeStreamSession<TState = unknown> {
           ...(broadcasts.length > 0 ? { broadcasts } : {}),
           ...(joinable !== undefined ? { joinable } : {}),
           ...(resultUnits.length > 0 ? { resultUnits } : {}),
+          ...(actionResults.length > 0 ? { actionResults } : {}),
           gameResult,
         };
       } catch (err) {
@@ -294,37 +422,54 @@ class NodeStreamSession<TState = unknown> {
 
     if (msg.type === "step") {
       const tick = typeof msg.tick === "number" ? msg.tick : undefined;
-      if (!this.hydrated || this.state === undefined) {
+      if (tick === undefined || !Number.isSafeInteger(tick) || tick < 0) {
         return {
           type: "error",
           ...(tick !== undefined ? { tick } : {}),
+          code: "VALIDATION_ERROR",
+          error: "tick must be a non-negative safe integer.",
+        };
+      }
+      if (
+        (Object.hasOwn(msg, "inputs") && !Array.isArray(msg.inputs)) ||
+        (Object.hasOwn(msg, "events") && !Array.isArray(msg.events)) ||
+        (Object.hasOwn(msg, "wantState") && typeof msg.wantState !== "boolean")
+      ) {
+        return { type: "error", tick, code: "VALIDATION_ERROR", error: "Invalid step payload." };
+      }
+      if (!this.hydrated || this.state === undefined) {
+        return {
+          type: "error",
+          tick,
           code: "VALIDATION_ERROR",
           error: "Stream session is not hydrated.",
         };
       }
       if (this.gameOver) {
-        return { type: "ignoredAfterGameOver", tick: tick ?? this.tick };
+        return { type: "ignoredAfterGameOver", tick };
       }
       if (tick !== this.tick + 1) {
         return {
           type: "error",
-          ...(tick !== undefined ? { tick } : {}),
+          tick,
           code: "VALIDATION_ERROR",
           error: `Expected tick ${this.tick + 1}.`,
         };
       }
-      const events = Array.isArray(msg.events) ? (msg.events as StreamStepEvent[]) : [];
+      const events = (msg.events ?? []) as StreamStepEvent[];
+      const inputs = (msg.inputs ?? []) as TickInput[];
       try {
+        validateResyncPlayers(msg.resyncPlayers);
         const out = await applySingleStep(
           this.game,
           this.tickRateHz,
           this.state,
           tick,
-          Array.isArray(msg.inputs) ? (msg.inputs as TickInput[]) : [],
+          inputs,
           events,
         );
         const includeState =
-          Boolean(msg.wantState) ||
+          msg.wantState === true ||
           events.length > 0 ||
           out.persist ||
           out.resultUnits.length > 0 ||
@@ -341,6 +486,7 @@ class NodeStreamSession<TState = unknown> {
           persist: out.persist,
           ...(out.joinable !== undefined ? { joinable: out.joinable } : {}),
           ...(out.resultUnits.length > 0 ? { resultUnits: out.resultUnits } : {}),
+          ...(out.actionResults !== undefined ? { actionResults: out.actionResults } : {}),
           gameResult: out.gameResult,
         };
       } catch (err) {

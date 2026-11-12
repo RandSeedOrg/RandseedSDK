@@ -47,6 +47,13 @@ against the shared [Result Unit fixture](./protocol/fixtures/game-result-event-v
 All server languages expose optional `resultDefinition` and `resultUnits`
 fields; emitting an event does not itself persist or archive it.
 
+Node.js and Rust also implement the internal
+[Session Stream v1](./protocol/session-stream-v1.md) WebSocket contract used
+between the trusted room host and the container; browsers must use `RoomClient`
+instead. The bilingual [AI-assisted frontend-to-multiplayer migration
+guide](./protocol/ai-multiplayer-migration.md) explains the trust boundary,
+lifecycle mapping, deterministic recovery, and release-blocking checks.
+
 The room host owns scheduling, authoritative persistence, player identity,
 and recovery. Game code must calculate from the supplied state and context;
 it must not run a separate authoritative timer or rely on process-global match

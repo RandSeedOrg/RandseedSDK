@@ -18,7 +18,18 @@ Pin a reviewed tag or commit instead of `main` for reproducible builds.
 The package requires Node.js 20 or later and supports ESM imports. JavaScript
 and TypeScript use the same SDK; TypeScript declarations are included.
 
+## AI-assisted multiplayer migration
+
+Use the bilingual [frontend-to-multiplayer migration guide](../protocol/ai-multiplayer-migration.md)
+([中文](../protocol/ai-multiplayer-migration.md#中文)) together with the
+[Session Stream v1 contract](../protocol/session-stream-v1.md). The browser
+must use `RoomClient`; this package implements the trusted container-side
+server.
+
 ## Minimal server (JavaScript)
+
+For a runnable multiplayer example that validates player actions and returns
+action results, see [`examples/cooperative-counter.mjs`](./examples/cooperative-counter.mjs).
 
 ```js
 import { createGameServer } from "@randseed/server-sdk";

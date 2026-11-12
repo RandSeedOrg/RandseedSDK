@@ -207,6 +207,13 @@ describe("Node.js Server SDK", () => {
       assert.throws(() => validateTickContext(context("")));
       assert.throws(() => validateTickContext({
         ...context("action-1"),
+        inputs: [
+          { playerId: "player_a", data: {}, actionId: "action-1", actionSchemaId: "action.v1" },
+          { playerId: "player_a", data: {}, actionId: "action-1", actionSchemaId: "action.v1" },
+        ],
+      }));
+      assert.throws(() => validateTickContext({
+        ...context("action-1"),
         inputs: [{
           playerId: "player_a",
           data: {},
@@ -254,6 +261,12 @@ describe("Node.js Server SDK", () => {
       assert.equal((await postTick()).status, 200);
       for (const invalid of [
         "invalid",
+        [],
+        [{ actionId: "unknown-action", status: "applied" }],
+        [
+          { actionId: "action-1", status: "applied" },
+          { actionId: "action-1", status: "rejected" },
+        ],
         [{ actionId: "action-1", status: "queued" }],
         [{ actionId: "", status: "rejected" }],
         [{ actionId: "action-1", status: "rejected", code: "not a code" }],

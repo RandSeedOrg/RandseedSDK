@@ -1,23 +1,17 @@
 import http from "node:http";
 import type {
-  GameActionResult,
   GameCommand,
   GameServer,
   JsonValue,
   MatchConfig,
   TickContext,
 } from "./types.js";
-import {
-  isValidActionCode,
-  isValidProtocolKey,
-} from "./protocol-identifiers.js";
 import { validateAgentGameCapabilities } from "./agent-capabilities.js";
 import {
   createAgentPlayerView,
   validateAgentPlayerContract,
   validateAgentPlayerViewRequest,
 } from "./agent-player-view.js";
-import { validateGameResultUnits } from "./result-units.js";
 import {
   attachStreamUpgradeHandler,
   resolveStreamDurability,
@@ -26,14 +20,16 @@ import {
 import {
   isRecord,
   validateGameCommand,
+  validateGameResult,
   validateGameManifest,
   validateJsonValue,
   validateMatchConfig,
+  validateStateResult,
   validateTickContext,
+  validateTickResult,
 } from "./validators.js";
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
-const NEXT_MATCH_MODES = new Set(["auto_next_match", "wait_for_ready", "close_room"]);
 
 export interface CreateGameServerOptions {
   gameId?: string;
@@ -178,102 +174,6 @@ function validateCommand(value: unknown): asserts value is GameCommand {
   validateGameCommand(value);
 }
 
-function validateStateResult(value: unknown): void {
-  if (!isRecord(value) || !Object.hasOwn(value, "state")) {
-    throw new Error("Game callback result must contain state.");
-  }
-  validateJsonValue(value);
-  if (Object.hasOwn(value, "playerViews") && value.playerViews !== undefined) {
-    if (!isRecord(value.playerViews)) {
-      throw new Error("playerViews must be an object keyed by playerId when provided.");
-    }
-    for (const [playerId, view] of Object.entries(value.playerViews)) {
-      if (playerId.trim().length === 0) {
-        throw new Error("playerViews keys must be non-empty playerId strings.");
-      }
-      validateJsonValue(view);
-    }
-  }
-  if (Object.hasOwn(value, "broadcasts")) {
-    if (!Array.isArray(value.broadcasts)) {
-      throw new Error("broadcasts must be an array when provided.");
-    }
-    validateJsonValue(value.broadcasts);
-  }
-  validateGameResultUnits(value.resultUnits);
-}
-
-function validateTickResult(value: unknown): asserts value is {
-  state: unknown;
-  broadcasts?: unknown[];
-  persist: boolean;
-  actionResults?: GameActionResult[];
-} {
-  validateStateResult(value);
-  if (!isRecord(value) || typeof value.persist !== "boolean") {
-    throw new Error("TickResult.persist must be a boolean.");
-  }
-  if (Object.hasOwn(value, "actionResults")) {
-    if (!Array.isArray(value.actionResults)) {
-      throw new Error("TickResult.actionResults must be an array when provided.");
-    }
-    for (const result of value.actionResults) {
-      if (!isRecord(result)
-        || !isValidProtocolKey(result.actionId)
-        || (result.status !== "applied" && result.status !== "rejected")
-        || (Object.hasOwn(result, "code") && !isValidActionCode(result.code))) {
-        throw new Error("TickResult.actionResults contains an invalid result.");
-      }
-    }
-  }
-}
-
-function validateGameResult(value: unknown): asserts value is {
-  over: boolean;
-  summary?: Record<string, unknown>;
-  nextMatchPolicy?: Record<string, unknown>;
-} {
-  if (!isRecord(value) || typeof value.over !== "boolean") {
-    throw new Error("GameResult.over must be a boolean.");
-  }
-  validateJsonValue(value);
-  validateGameResultUnits(value.resultUnits);
-
-  if (Object.hasOwn(value, "summary")) {
-    if (
-      !isRecord(value.summary) ||
-      typeof value.summary.durationSeconds !== "number" ||
-      !Number.isFinite(value.summary.durationSeconds) ||
-      value.summary.durationSeconds < 0
-    ) {
-      throw new Error("summary must contain a finite, non-negative durationSeconds.");
-    }
-    validateJsonValue(value.summary);
-  }
-
-  if (Object.hasOwn(value, "nextMatchPolicy")) {
-    const policy = value.nextMatchPolicy;
-    const timeoutMs = isRecord(policy) ? policy.timeoutMs : undefined;
-    if (
-      !isRecord(policy) ||
-      typeof policy.mode !== "string" ||
-      !NEXT_MATCH_MODES.has(policy.mode) ||
-      !Number.isSafeInteger(timeoutMs) ||
-      typeof timeoutMs !== "number" ||
-      timeoutMs < 0
-    ) {
-      throw new Error("nextMatchPolicy must contain a supported mode and non-negative integer timeoutMs.");
-    }
-    if (Object.hasOwn(policy, "carryover")) {
-      validateJsonValue(policy.carryover);
-    }
-  }
-
-  if (value.over && (!Object.hasOwn(value, "summary") || !Object.hasOwn(value, "nextMatchPolicy"))) {
-    throw new Error("A completed game must include summary and nextMatchPolicy.");
-  }
-}
-
 function sendJson(
   res: http.ServerResponse,
   statusCode: number,
@@ -410,7 +310,7 @@ export function createGameServer(
       if (method === "POST" && pathname === "/tick") {
         const body = validateTickRequest(await readJsonBody(req));
         const result = await game.tick(body.ctx, body.state);
-        validateTickResult(result);
+        validateTickResult(result, body.ctx.inputs);
         sendJson(res, 200, result);
         return;
       }

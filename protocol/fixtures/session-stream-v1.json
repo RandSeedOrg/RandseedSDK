@@ -1,0 +1,24 @@
+{
+  "protocol": "session-v1",
+  "actionInput": {
+    "playerId": "p1",
+    "data": { "delta": 2 },
+    "actionId": "act-1",
+    "actionSchemaId": "counter.action.v1"
+  },
+  "rejectedActionInput": {
+    "playerId": "p2",
+    "data": {},
+    "actionId": "act-2",
+    "actionSchemaId": "counter.action.v1"
+  },
+  "appliedActionResult": {
+    "actionId": "act-1",
+    "status": "applied"
+  },
+  "rejectedActionResult": {
+    "actionId": "act-2",
+    "status": "rejected",
+    "code": "missing_delta"
+  }
+}

@@ -6,6 +6,19 @@ import { createGameServer, mulberry32U32 } from "../dist/index.js";
 const fixture = JSON.parse(
   await readFile(new URL("../../protocol/fixtures/room-host-v1.json", import.meta.url), "utf8"),
 );
+const streamFixture = JSON.parse(
+  await readFile(new URL("../../protocol/fixtures/session-stream-v1.json", import.meta.url), "utf8"),
+);
+
+test("Session Stream action fixture matches the Rust SDK copy", async () => {
+  const rustFixture = JSON.parse(
+    await readFile(
+      new URL("../../rust/randseed-game-sdk/tests/fixtures/session-stream-v1.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(rustFixture, streamFixture);
+});
 
 test("Node SDK matches the shared room-host v1 fixture", async (t) => {
   const game = {

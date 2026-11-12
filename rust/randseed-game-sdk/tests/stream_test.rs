@@ -11,7 +11,7 @@ use randseed_game_sdk::{
     STREAM_PROTOCOL_V1,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -242,6 +242,11 @@ impl TypedGameServer for TypedCounterGame {
 async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over() {
     let factory = TypedStreamFactory(Arc::new(TypedCounterGame));
     let mut session: Box<dyn ActiveStreamSession> = factory.new_session();
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/session-stream-v1.json")).unwrap();
+    let action_input: TickInput = serde_json::from_value(fixture["actionInput"].clone()).unwrap();
+    let rejected_action_input: TickInput =
+        serde_json::from_value(fixture["rejectedActionInput"].clone()).unwrap();
 
     let hydrate_resp = session
         .handle_message(StreamClientMessage::Hydrate {
@@ -252,11 +257,7 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
             replay: vec![
                 StreamReplayStep {
                     tick: 1,
-                    inputs: vec![TickInput {
-                        player_id: "p1".into(),
-                        data: json!({ "delta": 2 }),
-                        ..Default::default()
-                    }],
+                    inputs: vec![action_input],
                     events: vec![],
                 },
                 StreamReplayStep {
@@ -280,6 +281,7 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
             tick,
             state,
             player_views,
+            action_results,
             game_result,
             ..
         } => {
@@ -288,20 +290,49 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
             let views = player_views.unwrap();
             assert_eq!(views["p1"]["mode"], "full");
             assert_eq!(views["p2"]["mode"], "full");
+            assert_eq!(action_results.len(), 1);
+            assert_eq!(action_results[0].action_id, "act-1");
+            assert_eq!(action_results[0].status, GameActionOutcome::Applied);
+            assert_eq!(
+                serde_json::to_value(action_results).unwrap(),
+                json!([fixture["appliedActionResult"].clone()])
+            );
             assert!(!game_result.over);
         }
         other => panic!("unexpected hydrate response: {other:?}"),
+    }
+
+    let skipped_tick = session
+        .handle_message(StreamClientMessage::Step {
+            tick: 4,
+            inputs: vec![],
+            events: vec![],
+            resync_players: vec![],
+            want_state: true,
+        })
+        .await;
+    match skipped_tick {
+        StreamServerMessage::Error { tick, code, .. } => {
+            assert_eq!(tick, Some(4));
+            assert_eq!(code, "VALIDATION_ERROR");
+        }
+        other => panic!("unexpected skipped-tick response: {other:?}"),
     }
 
     // Ordinary tick (tick 3): want_state = false, persist = false => state omitted!
     let step3 = session
         .handle_message(StreamClientMessage::Step {
             tick: 3,
-            inputs: vec![TickInput {
-                player_id: "p1".into(),
-                data: json!({ "delta": 1 }),
-                ..Default::default()
-            }],
+            inputs: vec![
+                TickInput {
+                    player_id: "p1".into(),
+                    data: json!({ "delta": 1 }),
+                    action_id: Some("act-3".into()),
+                    action_schema_id: Some("counter.action.v1".into()),
+                    ..Default::default()
+                },
+                rejected_action_input,
+            ],
             events: vec![],
             resync_players: vec![],
             want_state: false,
@@ -313,11 +344,24 @@ async fn typed_stream_session_hydrates_replays_pipelines_and_stops_at_game_over(
             state,
             player_views,
             persist,
+            action_results,
             ..
         } => {
             assert_eq!(tick, 3);
             assert!(state.is_none(), "ordinary tick must omit full state");
             assert!(!persist);
+            assert_eq!(action_results.len(), 2);
+            assert_eq!(action_results[0].action_id, "act-3");
+            assert_eq!(action_results[0].status, GameActionOutcome::Applied);
+            assert_eq!(action_results[1].action_id, "act-2");
+            assert_eq!(action_results[1].status, GameActionOutcome::Rejected);
+            assert_eq!(
+                serde_json::to_value(action_results).unwrap(),
+                json!([
+                    { "actionId": "act-3", "status": "applied" },
+                    fixture["rejectedActionResult"].clone()
+                ])
+            );
             let views = player_views.unwrap();
             assert_eq!(views["p1"]["mode"], "delta");
             assert_eq!(views["p2"]["mode"], "delta");

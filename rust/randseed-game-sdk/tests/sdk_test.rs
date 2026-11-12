@@ -188,6 +188,9 @@ fn tick_action_metadata_and_action_results_are_protocol_validated() {
     assert!(context(Some("action-1"), Some("action.v1"))
         .validate()
         .is_ok());
+    let mut duplicate_ids = context(Some("action-1"), Some("action.v1"));
+    duplicate_ids.inputs.push(duplicate_ids.inputs[0].clone());
+    assert!(duplicate_ids.validate().is_err());
     assert!(context(Some("action-1"), None).validate().is_err());
     assert!(context(Some(""), Some("action.v1")).validate().is_err());
     assert!(context(Some("action-1"), Some("invalid schema"))

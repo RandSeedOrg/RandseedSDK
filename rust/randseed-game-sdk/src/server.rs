@@ -13,9 +13,10 @@ use crate::stream::{
     TypedStreamFactory, ValueStreamFactory, STREAM_PROTOCOL_V1,
 };
 use crate::types::{
-    validate_game_result_units, CommandRequest, CommandResult, GameActionResult, GameCommand,
-    GameManifest, GameResult, GameResultEvent, HealthResponse, InitResult, IsGameOverRequest,
-    MatchConfig, PlayerEventRequest, PlayerEventResult, TickContext, TickRequest, TickResult,
+    validate_action_results_contract, validate_game_result_units, CommandRequest, CommandResult,
+    GameCommand, GameManifest, GameResult, GameResultEvent, HealthResponse, InitResult,
+    IsGameOverRequest, MatchConfig, PlayerEventRequest, PlayerEventResult, TickContext,
+    TickRequest, TickResult,
 };
 use async_trait::async_trait;
 use axum::{
@@ -214,10 +215,6 @@ fn invalid_action_results_response() -> Response {
 
 fn result_units_are_valid(result_units: Option<&[GameResultEvent]>) -> bool {
     validate_game_result_units(result_units, None).is_ok()
-}
-
-fn action_results_are_valid(action_results: Option<&[GameActionResult]>) -> bool {
-    action_results.is_none_or(|results| results.iter().all(|result| result.validate().is_ok()))
 }
 
 async fn call_game<T>(future: impl Future<Output = Result<T, SdkError>>) -> Result<T, SdkError> {
@@ -447,11 +444,23 @@ async fn handle_tick<G: GameServer>(
     if let Err(e) = req.ctx.validate() {
         return map_error_to_response(e).into_response();
     }
+    let expected_action_ids = req
+        .ctx
+        .inputs
+        .iter()
+        .filter_map(|input| input.action_id.clone())
+        .collect::<Vec<_>>();
     match call_game(state.game.tick(req.ctx, req.state)).await {
         Ok(res) if !result_units_are_valid(res.result_units.as_deref()) => {
             invalid_result_units_response()
         }
-        Ok(res) if !action_results_are_valid(res.action_results.as_deref()) => {
+        Ok(res)
+            if validate_action_results_contract(
+                res.action_results.as_deref(),
+                &expected_action_ids,
+            )
+            .is_err() =>
+        {
             invalid_action_results_response()
         }
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),

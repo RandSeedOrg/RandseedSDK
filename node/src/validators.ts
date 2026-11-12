@@ -1,9 +1,20 @@
-import type { GameCommand, GameManifest, JsonValue, MatchConfig, TickContext } from "./types.js";
+import type {
+  GameActionResult,
+  GameCommand,
+  GameManifest,
+  JsonValue,
+  MatchConfig,
+  TickContext,
+  TickInput,
+} from "./types.js";
 import {
+  isValidActionCode,
   isValidActionSchemaId,
   isValidProtocolKey,
 } from "./protocol-identifiers.js";
-import { validateGameResultDefinition } from "./result-units.js";
+import { validateGameResultDefinition, validateGameResultUnits } from "./result-units.js";
+
+const NEXT_MATCH_MODES = new Set(["auto_next_match", "wait_for_ready", "close_room"]);
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -154,6 +165,7 @@ export function validateTickContext(ctx: unknown): asserts ctx is TickContext {
   if (!Array.isArray(ctx.inputs)) {
     throw new Error("inputs must be an array.");
   }
+  const actionIds = new Set<string>();
   for (const input of ctx.inputs) {
     if (!isRecord(input)) {
       throw new Error("Each input must be an object.");
@@ -176,11 +188,15 @@ export function validateTickContext(ctx: unknown): asserts ctx is TickContext {
     if (hasActionId !== hasActionSchemaId) {
       throw new Error("input.actionId and input.actionSchemaId must be supplied together.");
     }
-    if (
-      hasActionId &&
-      (!isValidProtocolKey(input.actionId) || !isValidActionSchemaId(input.actionSchemaId))
-    ) {
-      throw new Error("input action identifiers are invalid.");
+    if (hasActionId) {
+      const actionId = input.actionId;
+      if (!isValidProtocolKey(actionId) || !isValidActionSchemaId(input.actionSchemaId)) {
+        throw new Error("input action identifiers are invalid.");
+      }
+      if (actionIds.has(actionId)) {
+        throw new Error("input actionId values must be unique within a tick.");
+      }
+      actionIds.add(actionId);
     }
   }
   if (Object.hasOwn(ctx, "commands")) {
@@ -209,5 +225,118 @@ export function validateGameCommand(command: unknown): asserts command is GameCo
     (!isSafeInteger(command.timestamp) || command.timestamp < 0)
   ) {
     throw new Error("command.timestamp must be a non-negative safe integer.");
+  }
+}
+
+export function validateStateResult(value: unknown): void {
+  if (!isRecord(value) || !Object.hasOwn(value, "state")) {
+    throw new Error("Game callback result must contain state.");
+  }
+  validateJsonValue(value);
+  if (Object.hasOwn(value, "playerViews") && value.playerViews !== undefined) {
+    if (!isRecord(value.playerViews)) {
+      throw new Error("playerViews must be an object keyed by playerId when provided.");
+    }
+    for (const [playerId, view] of Object.entries(value.playerViews)) {
+      if (playerId.trim().length === 0) {
+        throw new Error("playerViews keys must be non-empty playerId strings.");
+      }
+      validateJsonValue(view);
+    }
+  }
+  if (Object.hasOwn(value, "broadcasts")) {
+    if (!Array.isArray(value.broadcasts)) {
+      throw new Error("broadcasts must be an array when provided.");
+    }
+    validateJsonValue(value.broadcasts);
+  }
+  if (Object.hasOwn(value, "joinable") && typeof value.joinable !== "boolean") {
+    throw new Error("joinable must be a boolean when provided.");
+  }
+  validateGameResultUnits(value.resultUnits);
+}
+
+export function validateTickResult(
+  value: unknown,
+  inputs: TickInput[],
+): asserts value is {
+  state: unknown;
+  broadcasts?: unknown[];
+  persist: boolean;
+  actionResults?: GameActionResult[];
+} {
+  validateStateResult(value);
+  if (!isRecord(value) || typeof value.persist !== "boolean") {
+    throw new Error("TickResult.persist must be a boolean.");
+  }
+  const expectedActionIds = new Set(
+    inputs.flatMap(input => input.actionId === undefined ? [] : [input.actionId]),
+  );
+  const providedActionIds = new Set<string>();
+  if (Object.hasOwn(value, "actionResults")) {
+    if (!Array.isArray(value.actionResults)) {
+      throw new Error("TickResult.actionResults must be an array when provided.");
+    }
+    for (const result of value.actionResults) {
+      if (!isRecord(result)
+        || !isValidProtocolKey(result.actionId)
+        || (result.status !== "applied" && result.status !== "rejected")
+        || (Object.hasOwn(result, "code") && !isValidActionCode(result.code))) {
+        throw new Error("TickResult.actionResults contains an invalid result.");
+      }
+      if (!expectedActionIds.has(result.actionId) || providedActionIds.has(result.actionId)) {
+        throw new Error("TickResult.actionResults must contain one result per action ID in the tick.");
+      }
+      providedActionIds.add(result.actionId);
+    }
+  }
+  if (providedActionIds.size !== expectedActionIds.size) {
+    throw new Error("TickResult.actionResults must contain one result per action ID in the tick.");
+  }
+}
+
+export function validateGameResult(value: unknown): asserts value is {
+  over: boolean;
+  summary?: Record<string, unknown>;
+  nextMatchPolicy?: Record<string, unknown>;
+} {
+  if (!isRecord(value) || typeof value.over !== "boolean") {
+    throw new Error("GameResult.over must be a boolean.");
+  }
+  validateJsonValue(value);
+  validateGameResultUnits(value.resultUnits);
+
+  if (Object.hasOwn(value, "summary")) {
+    if (
+      !isRecord(value.summary) ||
+      typeof value.summary.durationSeconds !== "number" ||
+      !Number.isFinite(value.summary.durationSeconds) ||
+      value.summary.durationSeconds < 0
+    ) {
+      throw new Error("summary must contain a finite, non-negative durationSeconds.");
+    }
+    validateJsonValue(value.summary);
+  }
+
+  if (Object.hasOwn(value, "nextMatchPolicy")) {
+    const policy = value.nextMatchPolicy;
+    const timeoutMs = isRecord(policy) ? policy.timeoutMs : undefined;
+    if (
+      !isRecord(policy) ||
+      typeof policy.mode !== "string" ||
+      !NEXT_MATCH_MODES.has(policy.mode) ||
+      !Number.isSafeInteger(timeoutMs) ||
+      typeof timeoutMs !== "number" ||
+      timeoutMs < 0
+    ) {
+      throw new Error("nextMatchPolicy must contain a supported mode and non-negative integer timeoutMs.");
+    }
+    if (Object.hasOwn(policy, "carryover")) {
+      validateJsonValue(policy.carryover);
+    }
+  }
+
+  if (value.over && (!Object.hasOwn(value, "summary") || !Object.hasOwn(value, "nextMatchPolicy"))) {
+    throw new Error("A completed game must include summary and nextMatchPolicy.");
   }
 }

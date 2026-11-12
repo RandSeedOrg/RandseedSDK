@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use randseed_game_sdk::{
-    run_game_server, CommandResult, GameCommand, GameManifest, GameMetricAggregation,
-    GameMetricDefinition, GameResult, GameResultDefinition, GameResultEvent, GameResultParticipant,
-    GameServer, InitResult, MatchConfig, MatchSummary, NextMatchPolicy, PlayerEventResult,
-    ResultMetricScope, SdkError, TickContext, TickResult,
+    run_game_server, CommandResult, GameActionOutcome, GameActionResult, GameCommand, GameManifest,
+    GameMetricAggregation, GameMetricDefinition, GameResult, GameResultDefinition, GameResultEvent,
+    GameResultParticipant, GameServer, InitResult, MatchConfig, MatchSummary, NextMatchPolicy,
+    PlayerEventResult, ResultMetricScope, SdkError, TickContext, TickResult,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -80,17 +80,29 @@ impl GameServer for CooperativeCounter {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut next_count = count;
+        let mut action_results = Vec::new();
         for input in &ctx.inputs {
-            let delta = input
-                .data
-                .get("delta")
-                .and_then(Value::as_i64)
-                .ok_or_else(|| {
-                    SdkError::Validation("Each input must contain an integer delta.".into())
-                })?;
-            next_count = next_count
-                .checked_add(delta)
-                .ok_or_else(|| SdkError::Validation("The counter value is out of range.".into()))?;
+            let result = if !players.iter().any(|player| player == &input.player_id) {
+                Some((GameActionOutcome::Rejected, "not_in_match"))
+            } else if let Some(delta) = input.data.get("delta").and_then(Value::as_i64) {
+                if !(1..=3).contains(&delta) {
+                    Some((GameActionOutcome::Rejected, "invalid_delta"))
+                } else {
+                    next_count = next_count.checked_add(delta).ok_or_else(|| {
+                        SdkError::Validation("The counter value is out of range.".into())
+                    })?;
+                    Some((GameActionOutcome::Applied, "applied"))
+                }
+            } else {
+                Some((GameActionOutcome::Rejected, "invalid_delta"))
+            };
+            if let (Some(action_id), Some((status, code))) = (&input.action_id, result) {
+                action_results.push(GameActionResult {
+                    action_id: action_id.clone(),
+                    status,
+                    code: (status == GameActionOutcome::Rejected).then(|| code.to_string()),
+                });
+            }
         }
 
         state["count"] = json!(next_count);
@@ -136,7 +148,7 @@ impl GameServer for CooperativeCounter {
             persist: !result_units.is_empty(),
             joinable: None,
             result_units: (!result_units.is_empty()).then_some(result_units),
-            action_results: None,
+            action_results: (!action_results.is_empty()).then_some(action_results),
         })
     }
 

@@ -10,6 +10,13 @@ Implement authoritative game logic as calculations from the supplied state
 and tick context; avoid process-global match state, wall-clock time, operating
 system randomness, and unrecorded network responses.
 
+## AI-assisted multiplayer migration
+
+Use the bilingual [frontend-to-multiplayer migration guide](../../protocol/ai-multiplayer-migration.md)
+([中文](../../protocol/ai-multiplayer-migration.md#中文)) together with the
+[Session Stream v1 contract](../../protocol/session-stream-v1.md). The browser
+must use `RoomClient`; this crate implements the trusted container-side server.
+
 ## Requirements
 
 - Rust 2021 edition

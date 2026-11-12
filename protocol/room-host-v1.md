@@ -4,6 +4,8 @@ This protocol is the language-independent contract between a RandSeed room
 host and a game-server container. It uses UTF-8 JSON over HTTP. Object keys in
 the wire format are camelCase. A host invokes the container; browsers must use
 the browser `RoomClient`, not call these endpoints directly.
+The internal WebSocket session contract is documented separately in
+[`session-stream-v1.md`](./session-stream-v1.md).
 
 ## Endpoints
 
@@ -206,7 +208,11 @@ The `state` property is required. `playerViews`, `broadcasts`, `joinable`, and
 `resultUnits` are optional. When `playerViews` is provided as an object keyed by
 `playerId`, the room host retains `state` as the authoritative simulation state
 and delivers `playerViews[playerId]` (falling back to `state` when a key is
-absent) to each connected player's live snapshot channel. Any transition may
+absent) to each connected player's live snapshot channel. This fallback is
+safe only when the canonical `state` is fully public. Until the host enforces
+fail-closed per-player delivery, games containing private state must return a
+view for every active recipient on every transition that updates their view;
+never rely on an omitted key to hide private state. Any transition may
 emit zero or more completed units: `/init`, `/tick`, `/onPlayerJoin`,
 `/onPlayerLeave`, `/isGameOver`, and `/onCommand`.
 
@@ -236,12 +242,21 @@ derived from the host tick, not wall-clock time. Do not add successive
 Response:
 
 ```json
-{ "state": { "count": 1 }, "broadcasts": [], "persist": false }
+{
+  "state": { "count": 1 },
+  "broadcasts": [],
+  "persist": false,
+  "actionResults": [{ "actionId": "move-12", "status": "applied" }]
+}
 ```
 
 `state` and boolean `persist` are required. `broadcasts` and `resultUnits` are
-optional arrays. `persist` requests a snapshot; it does not determine whether
-the host keeps the authoritative state or journals and replays committed ticks.
+optional arrays. `actionResults` is optional when no input has an `actionId`.
+For every input carrying an `actionId`, return exactly one matching result with
+status `applied` or `rejected`; unknown, duplicate, or missing results are
+invalid. `actionId` values must be unique within a tick. `persist` requests a
+snapshot; it does not determine whether the host keeps the authoritative state
+or journals and replays committed ticks.
 
 ### Player events
 

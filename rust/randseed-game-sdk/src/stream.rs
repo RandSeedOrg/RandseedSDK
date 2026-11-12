@@ -8,9 +8,9 @@ use crate::agent_player_view::{
 use crate::errors::SdkError;
 use crate::server::GameServer;
 use crate::types::{
-    validate_game_result_units, CommandResult, GameActionResult, GameCommand, GameManifest,
-    GameResult, GameResultEvent, InitResult, IsGameOverRequest, MatchConfig, PlayerEventRequest,
-    PlayerEventResult, TickContext, TickInput, TickResult,
+    validate_action_results_contract, validate_game_result_units, CommandResult, GameActionResult,
+    GameCommand, GameManifest, GameResult, GameResultEvent, InitResult, IsGameOverRequest,
+    MatchConfig, PlayerEventRequest, PlayerEventResult, TickContext, TickInput, TickResult,
 };
 use async_trait::async_trait;
 use axum::extract::ws::{Message, WebSocket};
@@ -175,6 +175,13 @@ pub enum StreamServerMessage {
         /// Result units emitted during fast-forward replay.
         #[serde(default, rename = "resultUnits", skip_serializing_if = "Vec::is_empty")]
         result_units: Vec<GameResultEvent>,
+        /// Explicit results for actions replayed during hydration.
+        #[serde(
+            default,
+            rename = "actionResults",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        action_results: Vec<GameActionResult>,
         /// Terminal status after hydration/replay.
         #[serde(rename = "gameResult")]
         game_result: GameResult,
@@ -200,6 +207,13 @@ pub enum StreamServerMessage {
         /// Validated result units emitted during this tick.
         #[serde(default, rename = "resultUnits", skip_serializing_if = "Vec::is_empty")]
         result_units: Vec<GameResultEvent>,
+        /// Explicit results for actions processed during this tick.
+        #[serde(
+            default,
+            rename = "actionResults",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        action_results: Vec<GameActionResult>,
         /// Inline `isGameOver` evaluation for this tick.
         #[serde(rename = "gameResult")]
         game_result: GameResult,
@@ -562,19 +576,6 @@ async fn guard_unwind<T>(fut: impl Future<Output = Result<T, SdkError>>) -> Resu
     }
 }
 
-fn validate_action_results_contract(
-    action_results: Option<&[GameActionResult]>,
-) -> Result<(), SdkError> {
-    if let Some(results) = action_results {
-        if results.iter().any(|result| result.validate().is_err()) {
-            return Err(SdkError::Internal(
-                "Game server returned invalid action results.".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn validate_game_over_contract(res: &GameResult) -> Result<(), SdkError> {
     validate_game_result_units(res.result_units.as_deref(), None)?;
     if res.over {
@@ -652,6 +653,7 @@ impl<G: GameServer> ValueStreamSession<G> {
             Option<bool>,
             Option<HashMap<String, Value>>,
             Vec<GameResultEvent>,
+            Vec<GameActionResult>,
             GameResult,
         ),
         SdkError,
@@ -746,9 +748,15 @@ impl<G: GameServer> ValueStreamSession<G> {
             commands: Vec::new(),
         };
         ctx.validate()?;
+        let expected_action_ids = ctx
+            .inputs
+            .iter()
+            .filter_map(|input| input.action_id.clone())
+            .collect::<Vec<_>>();
         let tick_res = guard_unwind(game.tick(ctx, cur_state)).await?;
         validate_game_result_units(tick_res.result_units.as_deref(), None)?;
-        validate_action_results_contract(tick_res.action_results.as_deref())?;
+        validate_action_results_contract(tick_res.action_results.as_deref(), &expected_action_ids)?;
+        let action_results = tick_res.action_results.unwrap_or_default();
         cur_state = tick_res.state;
         if let Some(b) = tick_res.broadcasts {
             broadcasts.extend(b);
@@ -783,6 +791,7 @@ impl<G: GameServer> ValueStreamSession<G> {
             joinable,
             player_views,
             result_units,
+            action_results,
             game_result,
         ))
     }
@@ -810,6 +819,7 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                 let mut cur_state = state;
                 let mut all_broadcasts = Vec::new();
                 let mut all_units = Vec::new();
+                let mut all_action_results = Vec::new();
                 let mut joinable = None;
                 let mut last_views = None;
                 let had_replay = !replay.is_empty();
@@ -853,11 +863,12 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                     )
                     .await
                     {
-                        Ok((next_s, b, _persist, j, views, units, gr)) => {
+                        Ok((next_s, b, _persist, j, views, units, action_results, gr)) => {
                             cur_tick = step.tick;
                             cur_state = next_s;
                             all_broadcasts.extend(b);
                             all_units.extend(units);
+                            all_action_results.extend(action_results);
                             if j.is_some() {
                                 joinable = j;
                             }
@@ -887,6 +898,7 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                     broadcasts: all_broadcasts,
                     joinable,
                     result_units: all_units,
+                    action_results: all_action_results,
                     game_result,
                 }
             }
@@ -927,7 +939,16 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                 )
                 .await
                 {
-                    Ok((next_state, broadcasts, persist, joinable, player_views, units, gr)) => {
+                    Ok((
+                        next_state,
+                        broadcasts,
+                        persist,
+                        joinable,
+                        player_views,
+                        units,
+                        action_results,
+                        gr,
+                    )) => {
                         let include_state =
                             want_state || had_events || persist || !units.is_empty() || gr.over;
                         let out_state = if include_state {
@@ -946,6 +967,7 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                             persist,
                             joinable,
                             result_units: units,
+                            action_results,
                             game_result: gr,
                         }
                     }
@@ -1002,6 +1024,7 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
             Option<bool>,
             Option<HashMap<String, Value>>,
             Vec<GameResultEvent>,
+            Vec<GameActionResult>,
             GameResult,
         ),
         SdkError,
@@ -1089,9 +1112,15 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
             commands: Vec::new(),
         };
         ctx.validate()?;
+        let expected_action_ids = ctx
+            .inputs
+            .iter()
+            .filter_map(|input| input.action_id.clone())
+            .collect::<Vec<_>>();
         let tick_out = guard_unwind(game.step_typed(ctx, state, view_ctx, emit_views)).await?;
         validate_game_result_units(tick_out.result_units.as_deref(), None)?;
-        validate_action_results_contract(tick_out.action_results.as_deref())?;
+        validate_action_results_contract(tick_out.action_results.as_deref(), &expected_action_ids)?;
+        let action_results = tick_out.action_results.unwrap_or_default();
         if let Some(b) = tick_out.broadcasts {
             broadcasts.extend(b);
         }
@@ -1120,6 +1149,7 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
             joinable,
             player_views,
             result_units,
+            action_results,
             game_result,
         ))
     }
@@ -1159,6 +1189,7 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                 let mut cur_tick = tick;
                 let mut all_broadcasts = Vec::new();
                 let mut all_units = Vec::new();
+                let mut all_action_results = Vec::new();
                 let mut joinable = None;
                 let mut last_views = None;
                 let replay_len = replay.len();
@@ -1201,10 +1232,11 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                     )
                     .await
                     {
-                        Ok((b, _persist, j, views, units, gr)) => {
+                        Ok((b, _persist, j, views, units, action_results, gr)) => {
                             cur_tick = step.tick;
                             all_broadcasts.extend(b);
                             all_units.extend(units);
+                            all_action_results.extend(action_results);
                             if j.is_some() {
                                 joinable = j;
                             }
@@ -1247,6 +1279,7 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                     broadcasts: all_broadcasts,
                     joinable,
                     result_units: all_units,
+                    action_results: all_action_results,
                     game_result,
                 }
             }
@@ -1289,7 +1322,15 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                 )
                 .await
                 {
-                    Ok((broadcasts, persist, joinable, player_views, units, gr)) => {
+                    Ok((
+                        broadcasts,
+                        persist,
+                        joinable,
+                        player_views,
+                        units,
+                        action_results,
+                        gr,
+                    )) => {
                         let include_state =
                             want_state || had_events || persist || !units.is_empty() || gr.over;
                         let out_state = if include_state {
@@ -1318,6 +1359,7 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                             persist,
                             joinable,
                             result_units: units,
+                            action_results,
                             game_result: gr,
                         }
                     }
