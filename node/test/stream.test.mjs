@@ -76,19 +76,7 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
   assert.equal(manifestRes.headers.get("x-randseed-stream-protocol"), STREAM_PROTOCOL_V1);
   assert.equal(manifestRes.headers.get("x-randseed-stream-durability"), "checkpoint");
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/stream`);
-  const inbox = [];
-  let notify = null;
-  ws.addEventListener("message", (ev) => {
-    inbox.push(JSON.parse(String(ev.data)));
-    if (notify) {
-      const fn = notify;
-      notify = null;
-      fn();
-    }
-  });
-
-  test("private Session Stream views fail closed, validate roster actions, and return action results", async (t) => {
+  await (async () => {
     const game = {
       manifest: () => ({
         title: "Private Counter",
@@ -209,6 +197,17 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
       ws.addEventListener("close", resolve, { once: true });
       ws.close();
     });
+  })();
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/stream`);
+  const inbox = [];
+  let notify = null;
+  ws.addEventListener("message", (ev) => {
+    inbox.push(JSON.parse(String(ev.data)));
+    if (notify) {
+      const fn = notify;
+      notify = null;
+      fn();
+    }
   });
   await new Promise((resolve, reject) => {
     ws.addEventListener("open", resolve, { once: true });
