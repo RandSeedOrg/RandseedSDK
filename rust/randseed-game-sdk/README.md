@@ -55,6 +55,12 @@ It listens on `0.0.0.0:8080` by default. Set `PORT` to override the port. The
 example demonstrates deterministic tick processing, player lifecycle events,
 trusted reset commands, and a match-ending policy.
 
+For private per-player projections, strict options validation, action
+receipts, and a terminal policy, see
+[`examples/authoritative_room.rs`](examples/authoritative_room.rs). The
+paired cross-language migration guide is
+[`protocol/ai-multiplayer-migration.md`](../../protocol/ai-multiplayer-migration.md).
+
 ## Result Units
 
 Declare a versioned `GameResultDefinition` in `GameManifest`, then return
@@ -75,6 +81,12 @@ retries; corrections are append-only events.
 
 - Each request body is limited to 1 MiB. Match sequence numbers, ticks, and
   optional tick timestamps follow the protocol's safe-integer limits.
+- Session Stream hydration requires the active roster. Per-player views must
+  exactly cover that roster; private-view manifests fail closed on missing
+  views. See the [Session Stream v1 protocol](../../protocol/session-stream-v1.md)
+  and its shared fixture.
+- Protocol failures expose stable error codes, retryability, and creator
+  guidance from the [shared error fixture](../../protocol/fixtures/sdk-error-codes-v1.json).
 - Lifecycle methods must calculate outcomes from the state and context they
   receive so a room host can replay them after recovery.
 - `Mulberry32` follows JavaScript `ToInt32` seed conversion. Its cross-language

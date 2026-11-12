@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { createGameServer, STREAM_PROTOCOL_V1 } from "../dist/index.js";
+import { createGameServer, SdkProtocolError, STREAM_PROTOCOL_V1 } from "../dist/index.js";
+import { validateGameStateResult } from "../dist/contract-validation.js";
+
+const protocolFixture = JSON.parse(
+  await readFile(new URL("../../protocol/fixtures/session-stream-v1.json", import.meta.url), "utf8"),
+);
 
 test("Node SDK advertises session-v1 headers and drives pipelined /stream sessions", async (t) => {
   const game = {
@@ -71,6 +77,140 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
   assert.equal(manifestRes.headers.get("x-randseed-stream-protocol"), STREAM_PROTOCOL_V1);
   assert.equal(manifestRes.headers.get("x-randseed-stream-durability"), "checkpoint");
 
+  await (async () => {
+    const game = {
+      manifest: () => ({
+        title: "Private Counter",
+        version: "1.0.0",
+        minPlayers: 2,
+        maxPlayers: 2,
+        tickRateHz: 10,
+        persistentTable: false,
+        playerViewMode: "private",
+      }),
+      init: () => ({ state: {} }),
+      tick: (ctx, state) => {
+        if (ctx.inputs.some(input => input.data?.throwProtocol)) {
+          throw new SdkProtocolError("INVALID_STATE");
+        }
+        return {
+          state: { ...state, tick: ctx.tick },
+          persist: false,
+          playerViews: {
+            p1: { ownSecret: "P1_CANARY", tick: ctx.tick },
+            p2: { ownSecret: "P2_CANARY", tick: ctx.tick },
+          },
+          actionResults: ctx.inputs
+            .filter(input => input.actionId)
+            .map(input => ({ actionId: input.actionId, status: "applied" })),
+        };
+      },
+      onPlayerJoin: (_playerId, state) => ({ state }),
+      onPlayerLeave: (_playerId, state) => ({ state }),
+      isGameOver: () => ({ over: false }),
+    };
+
+    const server = createGameServer(game, 0);
+    await new Promise(resolve => server.once("listening", resolve));
+    t.after(() => new Promise((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve());
+    }));
+    const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/stream`);
+    const inbox = [];
+    let notify;
+    ws.addEventListener("message", event => {
+      inbox.push(JSON.parse(String(event.data)));
+      notify?.();
+      notify = undefined;
+    });
+    await new Promise((resolve, reject) => {
+      ws.addEventListener("open", resolve, { once: true });
+      ws.addEventListener("error", reject, { once: true });
+    });
+    t.after(() => ws.close());
+    const next = async () => {
+      while (inbox.length === 0) await new Promise(resolve => { notify = resolve; });
+      return inbox.shift();
+    };
+    const send = async payload => {
+      ws.send(JSON.stringify(payload));
+      return next();
+    };
+
+    const hydrated = await send({
+      type: "hydrate",
+      matchId: "private-1",
+      tickRateHz: 10,
+      tick: 0,
+      state: { secrets: { p1: "P1_CANARY", p2: "P2_CANARY" } },
+      players: ["p1", "p2"],
+      playerViews: {
+        p1: { ownSecret: "P1_CANARY" },
+        p2: { ownSecret: "P2_CANARY" },
+      },
+    });
+    assert.equal(hydrated.type, "hydrated");
+    assert.equal(hydrated.state, undefined);
+    assert.equal(hydrated.playerViews.p1.ownSecret, "P1_CANARY");
+    assert.equal(JSON.stringify(hydrated.playerViews.p1).includes("P2_CANARY"), false);
+
+    const missingInputData = await send({
+      type: "step",
+      tick: 1,
+      inputs: [{ playerId: "p1" }],
+    });
+    assert.equal(missingInputData.code, "INVALID_ACTION");
+
+    const wrongRoster = await send({
+      type: "step",
+      tick: 1,
+      inputs: [{ playerId: "p3", data: {} }],
+    });
+    assert.equal(wrongRoster.code, "WRONG_ROSTER");
+    assert.equal(wrongRoster.retryable, false);
+    const sequenceMismatch = await send({ type: "step", tick: 2 });
+    assert.equal(sequenceMismatch.code, protocolFixture.sequenceMismatchCode);
+
+    const stepped = await send({
+      type: "step",
+      tick: 1,
+      inputs: [{
+        playerId: "p1",
+        data: {},
+        actionId: "act-1",
+        actionSchemaId: "counter.action.v1",
+      }],
+    });
+    assert.equal(stepped.type, "stepResult");
+    assert.deepEqual(stepped.actionResults, [{ actionId: "act-1", status: "applied" }]);
+    assert.equal(JSON.stringify(stepped.playerViews.p1).includes("P2_CANARY"), false);
+
+    const callbackProtocolError = await send({
+      type: "step",
+      tick: 2,
+      inputs: [{ playerId: "p1", data: { throwProtocol: true } }],
+    });
+    assert.equal(callbackProtocolError.code, "INVALID_STATE");
+
+    const incompleteViews = await send({
+      type: "hydrate",
+      matchId: "private-2",
+      tickRateHz: 10,
+      tick: 0,
+      state: {},
+      players: ["p1", "p2"],
+      playerViews: { p1: { ownSecret: "P1_CANARY" } },
+    });
+    assert.equal(incompleteViews.code, "INVALID_RESULT");
+    assert.equal(incompleteViews.retryable, false);
+    const notHydrated = await send({ type: "step", tick: 1 });
+    assert.equal(notHydrated.code, "INVALID_STREAM_MESSAGE");
+    await new Promise(resolve => {
+      if (ws.readyState === WebSocket.CLOSED) return resolve();
+      ws.addEventListener("close", resolve, { once: true });
+      ws.close();
+    });
+  })();
   const ws = new WebSocket(`ws://127.0.0.1:${port}/stream`);
   const inbox = [];
   let notify = null;
@@ -81,6 +221,17 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
       notify = null;
       fn();
     }
+  });
+
+  test("serialized private view-map limit includes player ID keys and JSON overhead", () => {
+    const playerId = "p".repeat(1024 * 1024);
+    assert.throws(
+      () => validateGameStateResult(
+        { state: {}, playerViews: { [playerId]: { ownSecret: "private" } } },
+        [playerId],
+      ),
+      error => error instanceof SdkProtocolError && error.code === "RESOURCE_LIMIT_EXCEEDED",
+    );
   });
   await new Promise((resolve, reject) => {
     ws.addEventListener("open", resolve, { once: true });
@@ -104,6 +255,7 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
       tickRateHz: 20,
       tick: 0,
       state: { tick: 0, sum: 0, players: ["p1"] },
+      players: ["p1"],
       replay: [
         { tick: 1, inputs: [{ playerId: "p1", data: { add: 2 } }] },
         { tick: 2, events: [{ type: "join", playerId: "p2" }] },

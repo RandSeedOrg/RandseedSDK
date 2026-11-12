@@ -21,6 +21,7 @@ impl GameServer for CooperativeCounter {
             tick_rate_hz: 5.0,
             persistent_table: false,
             options_schema: None,
+            player_view_mode: None,
             result_definition: Some(GameResultDefinition {
                 version: "counter-results-v1".into(),
                 unit_types: vec!["milestone".into()],

@@ -9,6 +9,7 @@ import {
   createGameServer,
   validateGameManifest,
   validateMatchConfig,
+  normalizeTickContext,
   validateTickContext,
   mulberry32,
   mulberry32U32,
@@ -217,6 +218,20 @@ describe("Node.js Server SDK", () => {
       assert.throws(() => validateTickContext(context("界".repeat(86))));
     });
 
+    test("legacy flattened input fields normalize to data and empty inputs are rejected", () => {
+      const normalized = normalizeTickContext({
+        tick: 1,
+        elapsedSeconds: 1,
+        inputs: [{ playerId: "player_a", dx: 1, dy: -1 }],
+      });
+      assert.deepEqual(normalized.inputs[0].data, { dx: 1, dy: -1 });
+      assert.throws(() => normalizeTickContext({
+        tick: 1,
+        elapsedSeconds: 1,
+        inputs: [{ playerId: "player_a" }],
+      }));
+    });
+
     test("POST /tick rejects malformed actionResults", async t => {
       let actionResults = [];
       const resultGame = {
@@ -403,6 +418,9 @@ describe("Node.js Server SDK", () => {
       });
       assert.equal(response.status, 413);
       assert.deepEqual(await response.json(), {
+        code: "RESOURCE_LIMIT_EXCEEDED",
+        retryable: false,
+        creatorAction: "Reduce request, stream frame, state, result, or view size below the documented limit.",
         error: "Request body exceeds the 1 MiB limit.",
       });
     });
@@ -428,7 +446,11 @@ describe("Node.js Server SDK", () => {
           }),
         });
         assert.equal(response.status, 500);
-        assert.deepEqual(await response.json(), { error: "Internal server error." });
+        const body = await response.json();
+        assert.equal(body.code, "CALLBACK_FAILED");
+        assert.equal(body.retryable, false);
+        assert.equal(body.error.includes("sensitive internal details"), false);
+        assert.ok(body.creatorAction);
       } finally {
         await new Promise((resolve, reject) => {
           failingServer.close((error) => error ? reject(error) : resolve());

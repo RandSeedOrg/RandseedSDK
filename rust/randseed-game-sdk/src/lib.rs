@@ -29,7 +29,7 @@ pub use agent_player_view::{
     MAX_AGENT_PLAYER_ACTION_BYTES, MAX_AGENT_PLAYER_MEMORY_BYTES, MAX_AGENT_PLAYER_REQUEST_BYTES,
     MAX_AGENT_PLAYER_VIEW_BYTES,
 };
-pub use errors::SdkError;
+pub use errors::{SdkError, SdkErrorCode};
 pub use platform::{PlatformClient, PlayerInfo};
 pub use prng::Mulberry32;
 pub use replay::{
@@ -46,11 +46,12 @@ pub use stream::{
     TypedGameServer, TypedInitResult, TypedTickResult, STREAM_PROTOCOL_V1,
 };
 pub use types::{
-    validate_game_result_units, CommandRequest, CommandResult, GameActionOutcome, GameActionResult,
-    GameCommand, GameManifest, GameMetricAggregation, GameMetricDefinition, GameResult,
-    GameResultCorrection, GameResultCorrectionAction, GameResultDefinition, GameResultEvent,
-    GameResultParticipant, GameResultTeam, HealthResponse, InitResult, IsGameOverRequest,
-    MatchConfig, MatchOptions, MatchSummary, NextMatchPolicy, PlayerEventRequest,
-    PlayerEventResult, RatioMetricAggregation, ResultMetricScope, ResultOutcome,
-    SimpleMetricAggregation, TickContext, TickInput, TickRequest, TickResult,
+    validate_game_result_units, validate_player_views, CommandRequest, CommandResult,
+    GameActionOutcome, GameActionResult, GameCommand, GameManifest, GameMetricAggregation,
+    GameMetricDefinition, GameResult, GameResultCorrection, GameResultCorrectionAction,
+    GameResultDefinition, GameResultEvent, GameResultParticipant, GameResultTeam, HealthResponse,
+    InitResult, IsGameOverRequest, MatchConfig, MatchOptions, MatchSummary, NextMatchPolicy,
+    PlayerEventRequest, PlayerEventResult, PlayerViewMode, RatioMetricAggregation,
+    ResultMetricScope, ResultOutcome, SimpleMetricAggregation, TickContext, TickInput, TickRequest,
+    TickResult, MAX_PLAYER_VIEW_BYTES,
 };

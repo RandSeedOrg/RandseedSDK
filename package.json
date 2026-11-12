@@ -21,6 +21,7 @@
   },
   "scripts": {
     "build": "tsc --project node/tsconfig.json",
+    "sdk:preflight": "npm run build && node scripts/sdk-migration-preflight.mjs",
     "test": "npm run build && node --test node/test/*.test.mjs scripts/test-sdk-release-notify.mjs scripts/test-sdk-guide-notify.mjs",
     "prepare": "npm run build"
   },

@@ -10,6 +10,20 @@ permissions:
   contents: read
 
 jobs:
+  migration-preflight:
+    name: Multiplayer migration preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run sdk:preflight
+      - run: cargo test --manifest-path Cargo.toml -p randseed-game-sdk --test stream_test sdk_migration_preflight
+
   node:
     name: Node.js SDK
     runs-on: ubuntu-latest

@@ -47,11 +47,14 @@ test("Game servers advertise Agent support only by explicit valid declaration", 
     declaration = { ...valid, observationProtocolVersion: 2 };
     response = await fetch(url);
     assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), { error: "Agent capabilities are unavailable." });
+    const invalidBody = await response.json();
+    assert.equal(invalidBody.code, "INVALID_RESULT");
+    assert.equal(invalidBody.retryable, false);
+    assert.equal(invalidBody.creatorAction, "Correct the game callback result to satisfy its documented schema.");
     declaration = undefined;
     response = await fetch(url);
     assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), { error: "Agent capabilities are unavailable." });
+    assert.equal((await response.json()).code, "INVALID_RESULT");
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -63,7 +66,10 @@ test("Agent capability declaration failures do not expose internal errors", asyn
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/agent/capabilities`);
     assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), { error: "Agent capabilities are unavailable." });
+    const body = await response.json();
+    assert.equal(body.code, "CALLBACK_FAILED");
+    assert.equal(body.retryable, false);
+    assert.equal(body.error.includes("private detail"), false);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

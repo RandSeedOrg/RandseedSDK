@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./errors.js";
 export * from "./agent-observation.js";
 export * from "./agent-capabilities.js";
 export * from "./agent-player-view.js";

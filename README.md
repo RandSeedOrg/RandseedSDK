@@ -44,8 +44,17 @@ implementation in this repository is tested against the same
 [wire fixture](./protocol/fixtures/room-host-v1.json), including deterministic
 Mulberry32 test vectors. Result Unit declarations and events are also validated
 against the shared [Result Unit fixture](./protocol/fixtures/game-result-event-v1.json).
+Stateful WebSocket recovery and action receipt behavior follow
+[`Session Stream v1`](./protocol/session-stream-v1.md) and its shared
+[stream fixture](./protocol/fixtures/session-stream-v1.json). Stable SDK error
+codes and retryability are defined in the shared
+[error fixture](./protocol/fixtures/sdk-error-codes-v1.json).
 All server languages expose optional `resultDefinition` and `resultUnits`
 fields; emitting an event does not itself persist or archive it.
+
+Creators migrating an existing browser game can follow the
+[AI-assisted multiplayer migration guide](./protocol/ai-multiplayer-migration.md)
+and run the Node/Rust migration preflight documented there.
 
 The room host owns scheduling, authoritative persistence, player identity,
 and recovery. Game code must calculate from the supplied state and context;

@@ -1,0 +1,75 @@
+{
+  "protocolVersion": 1,
+  "hydrateRequest": {
+    "type": "hydrate",
+    "matchId": "stream-match-1",
+    "tickRateHz": 10.0,
+    "tick": 4,
+    "state": {
+      "version": 1,
+      "tick": 4,
+      "players": ["p1", "p2"],
+      "secrets": {
+        "p1": "P1_CANARY",
+        "p2": "P2_CANARY"
+      }
+    },
+    "players": ["p1", "p2"],
+    "playerViews": {
+      "p1": { "tick": 4, "ownSecret": "P1_CANARY" },
+      "p2": { "tick": 4, "ownSecret": "P2_CANARY" }
+    },
+    "replay": [
+      {
+        "tick": 5,
+        "inputs": [{
+          "playerId": "p1",
+          "data": { "move": "advance" },
+          "actionId": "action-5",
+          "actionSchemaId": "counter.action.v1"
+        }],
+        "events": []
+      }
+    ],
+    "resyncPlayers": []
+  },
+  "stepRequest": {
+    "type": "step",
+    "tick": 6,
+    "inputs": [{
+      "playerId": "p2",
+      "data": { "move": "hold" },
+      "actionId": "action-6",
+      "actionSchemaId": "counter.action.v1"
+    }],
+    "events": [
+      { "type": "join", "playerId": "p2" },
+      { "type": "leave", "playerId": "p2" }
+    ],
+    "resyncPlayers": ["p1"],
+    "wantState": true
+  },
+  "stepResult": {
+    "type": "stepResult",
+    "tick": 6,
+    "state": {
+      "version": 1,
+      "tick": 6,
+      "players": ["p1", "p2"],
+      "secrets": {
+        "p1": "P1_CANARY",
+        "p2": "P2_CANARY"
+      }
+    },
+    "playerViews": {
+      "p1": { "tick": 6, "ownSecret": "P1_CANARY" },
+      "p2": { "tick": 6, "ownSecret": "P2_CANARY" }
+    },
+    "broadcasts": [],
+    "persist": false,
+    "actionResults": [{ "actionId": "action-6", "status": "rejected", "code": "INVALID_MOVE" }],
+    "gameResult": { "over": false }
+  },
+  "sequenceMismatchCode": "TICK_SEQUENCE_MISMATCH",
+  "replayMismatchCode": "REPLAY_MISMATCH"
+}

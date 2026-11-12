@@ -45,7 +45,12 @@ createGameServer(game, Number(process.env.PORT ?? 8080));
 `createGameServer` starts the HTTP server and returns its Node.js
 `http.Server`. It exposes the lifecycle routes listed in the protocol, validates
 requests and game responses, limits request bodies to 1 MiB, and returns
-sanitized errors for failed game callbacks.
+sanitized errors for failed game callbacks. It also exposes the stateful
+`/stream` WebSocket contract from
+[`Session Stream v1`](../protocol/session-stream-v1.md). Stream hydration
+requires the active roster, each step must advance one contiguous tick, and
+per-player views are matched exactly to the active seats with no canonical-state
+fallback. `actionResults` are returned in `stepResult` and in replay hydration.
 
 ## Result Units
 
@@ -124,6 +129,10 @@ project's `package.json`, or use an `.mjs` entry point.
 See the [protocol contract](../protocol/room-host-v1.md) and shared
 [compatibility fixture](../protocol/fixtures/room-host-v1.json) for the exact
 wire format. The SDK does not provide payment APIs or a GameVRF client.
+
+For an existing browser game migration, see the paired
+[Node/Rust migration guide](../protocol/ai-multiplayer-migration.md) and
+[Node example](./examples/authoritative-room.mjs).
 
 The Tier B helpers require storage of `match_config_json` and `commands_json`
 alongside the replay row, plus a zero-based `input_index` on every input row.
