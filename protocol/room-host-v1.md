@@ -84,6 +84,17 @@ a JSON Schema for game options. `resultDefinition` is optional and declares
 the result-unit types and metric aggregation contract described below. Keep its
 version stable only while its meaning is unchanged.
 
+`playerViewMode` may be `"private"` when every active seat must receive a
+recipient-specific projection. In this mode, `POST /init` must return exactly
+one `playerViews` entry for every configured player. `POST /tick` and
+`POST /onCommand` requests must include the active `players` roster whenever
+the game returns per-player views; private-view games must always include it.
+Player-event requests may include `players` for the resulting roster (after a
+join or leave). Whenever `playerViews` is returned, the request must provide
+that resulting roster so the SDK can verify an exact key match. Private mode
+rejects missing views; an absent or extra key is an error, never a fallback to
+canonical `state`. Each view is capped at 64 KiB and the map at 1 MiB.
+
 ### Match configuration
 
 ```json
@@ -204,11 +215,12 @@ Response:
 
 The `state` property is required. `playerViews`, `broadcasts`, `joinable`, and
 `resultUnits` are optional. When `playerViews` is provided as an object keyed by
-`playerId`, the room host retains `state` as the authoritative simulation state
-and delivers `playerViews[playerId]` (falling back to `state` when a key is
-absent) to each connected player's live snapshot channel. Any transition may
-emit zero or more completed units: `/init`, `/tick`, `/onPlayerJoin`,
-`/onPlayerLeave`, `/isGameOver`, and `/onCommand`.
+`playerId`, its keys must exactly match the request's active roster. The room
+host retains `state` as authoritative simulation state and delivers only the
+matching per-player view. It must never fall back to canonical state for a
+missing key. Private-view manifests require `playerViews` on every state
+transition. Any transition may emit zero or more completed units: `/init`,
+`/tick`, `/onPlayerJoin`, `/onPlayerLeave`, `/isGameOver`, and `/onCommand`.
 
 ### Tick
 
@@ -222,7 +234,8 @@ Request:
     "commands": [],
     "elapsedSeconds": 0.2
   },
-  "state": { "count": 0 }
+  "state": { "count": 0 },
+  "players": ["pairwise-a", "pairwise-b"]
 }
 ```
 
@@ -240,8 +253,10 @@ Response:
 ```
 
 `state` and boolean `persist` are required. `broadcasts` and `resultUnits` are
-optional arrays. `persist` requests a snapshot; it does not determine whether
-the host keeps the authoritative state or journals and replays committed ticks.
+optional arrays. When player projections are returned, include `players` in the
+request so the SDK can check exact roster coverage. `persist` requests a
+snapshot; it does not determine whether the host keeps the authoritative state
+or journals and replays committed ticks.
 
 ### Player events
 
@@ -252,7 +267,8 @@ the host keeps the authoritative state or journals and replays committed ticks.
 ```
 
 They return `{ "state": ..., "broadcasts": [] }`. `state` is required;
-`broadcasts` and `resultUnits` are optional.
+`broadcasts` and `resultUnits` are optional. Include `players` when returning
+per-player views; it describes the resulting roster after the event.
 
 ### Game over and trusted commands
 
@@ -277,7 +293,11 @@ Browser-ready signaling for `wait_for_ready` is not part of this protocol yet.
 Trusted host commands use `POST /onCommand` with
 `{ "command": { "type": "reset", "data": {} }, "state": ... }` and return
 `{ "state": ..., "broadcasts": [], "resultUnits": [] }`. This endpoint is not
-a player input API.
+a player input API. Include `players` when returning `playerViews`.
+
+The stateful WebSocket contract, roster lifecycle ordering, recovery, action
+receipts, and structured stream errors are specified in
+[`session-stream-v1.md`](./session-stream-v1.md).
 
 ## Result Units and metrics
 

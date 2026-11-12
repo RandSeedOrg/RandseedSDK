@@ -5,19 +5,20 @@ use crate::agent_capabilities::AgentGameCapabilities;
 use crate::agent_player_view::{
     AgentPlayerContract, AgentPlayerViewContext, AgentPlayerViewProjection, AgentPlayerViewRequest,
 };
-use crate::errors::SdkError;
+use crate::errors::{SdkError, SdkErrorCode};
 use crate::server::GameServer;
 use crate::types::{
-    validate_game_result_units, CommandResult, GameActionResult, GameCommand, GameManifest,
-    GameResult, GameResultEvent, InitResult, IsGameOverRequest, MatchConfig, PlayerEventRequest,
-    PlayerEventResult, TickContext, TickInput, TickResult,
+    validate_game_result_units, validate_player_views, CommandResult, GameActionResult,
+    GameCommand, GameManifest, GameResult, GameResultEvent, InitResult, IsGameOverRequest,
+    MatchConfig, PlayerEventRequest, PlayerEventResult, PlayerViewMode, TickContext, TickInput,
+    TickResult,
 };
 use async_trait::async_trait;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{FutureExt, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -72,7 +73,7 @@ pub struct ManifestWireResponse {
 
 /// Authoritative room lifecycle event bundled with a stream step.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum StreamStepEvent {
     /// Player admitted or reconnected to the room.
     Join {
@@ -95,7 +96,7 @@ pub enum StreamStepEvent {
 
 /// Deterministic step replayed during container session hydration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StreamReplayStep {
     /// One-based authoritative simulation tick.
     pub tick: u64,
@@ -109,7 +110,7 @@ pub struct StreamReplayStep {
 
 /// Control messages sent from `GameRoom DO` to `ws://container:8080/stream`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum StreamClientMessage {
     /// Initialize or recover the container's in-memory match state from a checkpoint.
     Hydrate {
@@ -123,6 +124,16 @@ pub enum StreamClientMessage {
         tick: u64,
         /// Full authoritative checkpoint state.
         state: Value,
+        /// Active player roster at the checkpoint.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        players: Vec<String>,
+        /// Per-player views stored alongside the checkpoint, required for private views without replay.
+        #[serde(
+            default,
+            rename = "playerViews",
+            skip_serializing_if = "Option::is_none"
+        )]
+        player_views: Option<HashMap<String, Value>>,
         /// Ordered post-checkpoint steps to fast-forward deterministically.
         #[serde(default)]
         replay: Vec<StreamReplayStep>,
@@ -175,6 +186,13 @@ pub enum StreamServerMessage {
         /// Result units emitted during fast-forward replay.
         #[serde(default, rename = "resultUnits", skip_serializing_if = "Vec::is_empty")]
         result_units: Vec<GameResultEvent>,
+        /// Action receipts emitted during fast-forward replay.
+        #[serde(
+            default,
+            rename = "actionResults",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        action_results: Vec<GameActionResult>,
         /// Terminal status after hydration/replay.
         #[serde(rename = "gameResult")]
         game_result: GameResult,
@@ -200,6 +218,13 @@ pub enum StreamServerMessage {
         /// Validated result units emitted during this tick.
         #[serde(default, rename = "resultUnits", skip_serializing_if = "Vec::is_empty")]
         result_units: Vec<GameResultEvent>,
+        /// Explicit outcomes for action IDs submitted on this tick.
+        #[serde(
+            default,
+            rename = "actionResults",
+            skip_serializing_if = "Option::is_none"
+        )]
+        action_results: Option<Vec<GameActionResult>>,
         /// Inline `isGameOver` evaluation for this tick.
         #[serde(rename = "gameResult")]
         game_result: GameResult,
@@ -216,6 +241,10 @@ pub enum StreamServerMessage {
         tick: Option<u64>,
         /// Machine-readable error code.
         code: String,
+        /// Whether retrying without changing the request or game code may succeed.
+        retryable: bool,
+        /// Creator-facing correction guidance.
+        creator_action: String,
         /// Sanitized error message.
         error: String,
     },
@@ -364,6 +393,15 @@ pub trait TypedGameServer: Send + Sync + 'static {
 /// Blanket adapter exposing any [`TypedGameServer`] over the 8 stateless HTTP endpoints.
 pub struct TypedGameAdapter<T: TypedGameServer>(pub Arc<T>);
 
+fn deserialize_game_state<T: DeserializeOwned>(value: Value) -> Result<T, SdkError> {
+    serde_json::from_value(value).map_err(|_| {
+        SdkError::protocol_with_message(
+            SdkErrorCode::InvalidState,
+            "State does not match the game server's declared schema.",
+        )
+    })
+}
+
 #[async_trait]
 impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
     async fn agent_capabilities(&self) -> Result<Option<AgentGameCapabilities>, SdkError> {
@@ -378,8 +416,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         &self,
         request: AgentPlayerViewRequest,
     ) -> Result<AgentPlayerViewProjection, SdkError> {
-        let state: T::State = serde_json::from_value(request.state)
-            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        let state: T::State = deserialize_game_state(request.state)?;
         self.0
             .project_agent_player_view_typed(
                 &request.context,
@@ -412,8 +449,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
     }
 
     async fn tick(&self, ctx: TickContext, state_val: Value) -> Result<TickResult, SdkError> {
-        let mut state: T::State = serde_json::from_value(state_val)
-            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        let mut state: T::State = deserialize_game_state(state_val)?;
         let mut view_ctx = T::ViewContext::default();
         let out = self
             .0
@@ -440,6 +476,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         self.on_player_join_ext(PlayerEventRequest {
             player_id,
             state,
+            players: None,
             extra: HashMap::new(),
         })
         .await
@@ -449,8 +486,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         &self,
         req: PlayerEventRequest,
     ) -> Result<PlayerEventResult, SdkError> {
-        let mut state: T::State = serde_json::from_value(req.state)
-            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        let mut state: T::State = deserialize_game_state(req.state)?;
         let mut view_ctx = T::ViewContext::default();
         let out = self
             .0
@@ -475,6 +511,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         self.on_player_leave_ext(PlayerEventRequest {
             player_id,
             state,
+            players: None,
             extra: HashMap::new(),
         })
         .await
@@ -484,8 +521,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         &self,
         req: PlayerEventRequest,
     ) -> Result<PlayerEventResult, SdkError> {
-        let mut state: T::State = serde_json::from_value(req.state)
-            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        let mut state: T::State = deserialize_game_state(req.state)?;
         let mut view_ctx = T::ViewContext::default();
         let out = self
             .0
@@ -511,8 +547,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
     }
 
     async fn is_game_over_ext(&self, req: IsGameOverRequest) -> Result<GameResult, SdkError> {
-        let state: T::State = serde_json::from_value(req.state)
-            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        let state: T::State = deserialize_game_state(req.state)?;
         self.0.is_game_over_typed(&state).await
     }
 
@@ -521,8 +556,7 @@ impl<T: TypedGameServer> GameServer for TypedGameAdapter<T> {
         command: GameCommand,
         state_val: Value,
     ) -> Result<CommandResult, SdkError> {
-        let mut state: T::State = serde_json::from_value(state_val)
-            .map_err(|e| SdkError::Validation(format!("Invalid game state payload: {e}")))?;
+        let mut state: T::State = deserialize_game_state(state_val)?;
         let mut view_ctx = T::ViewContext::default();
         let out = self
             .0
@@ -557,58 +591,178 @@ pub trait ActiveStreamSession: Send {
 
 async fn guard_unwind<T>(fut: impl Future<Output = Result<T, SdkError>>) -> Result<T, SdkError> {
     match AssertUnwindSafe(fut).catch_unwind().await {
-        Ok(res) => res,
-        Err(_) => Err(SdkError::Internal("Game callback panicked.".into())),
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(SdkError::Protocol { code, message })) => {
+            Err(SdkError::protocol_with_message(code, message))
+        }
+        Ok(Err(_)) | Err(_) => Err(SdkError::protocol(SdkErrorCode::CallbackFailed)),
     }
 }
 
 fn validate_action_results_contract(
     action_results: Option<&[GameActionResult]>,
+    submitted_action_ids: &HashSet<String>,
 ) -> Result<(), SdkError> {
     if let Some(results) = action_results {
-        if results.iter().any(|result| result.validate().is_err()) {
-            return Err(SdkError::Internal(
-                "Game server returned invalid action results.".into(),
-            ));
+        let mut reported = HashSet::with_capacity(results.len());
+        for result in results {
+            if result.validate().is_err()
+                || !submitted_action_ids.contains(&result.action_id)
+                || !reported.insert(result.action_id.as_str())
+            {
+                return Err(SdkError::protocol(SdkErrorCode::InvalidResult));
+            }
         }
     }
     Ok(())
 }
 
+fn validate_result_units(result_units: Option<&[GameResultEvent]>) -> Result<(), SdkError> {
+    validate_game_result_units(result_units, None).map_err(|error| {
+        if error.to_string().to_ascii_lowercase().contains("limit")
+            || error.to_string().to_ascii_lowercase().contains("exceeds")
+        {
+            SdkError::protocol(SdkErrorCode::ResourceLimitExceeded)
+        } else {
+            SdkError::protocol(SdkErrorCode::InvalidResult)
+        }
+    })
+}
+
 fn validate_game_over_contract(res: &GameResult) -> Result<(), SdkError> {
-    validate_game_result_units(res.result_units.as_deref(), None)?;
+    validate_result_units(res.result_units.as_deref())?;
     if res.over {
         let policy_ok = res.next_match_policy.as_ref().is_some_and(|p| {
             matches!(
                 p.mode.as_str(),
                 "auto_next_match" | "wait_for_ready" | "close_room"
-            )
+            ) && p.timeout_ms <= 9_007_199_254_740_991
         });
         let summary_ok = res
             .summary
             .as_ref()
             .is_some_and(|s| s.duration_seconds.is_finite() && s.duration_seconds >= 0.0);
         if !policy_ok || !summary_ok {
-            return Err(SdkError::Internal(
-                "The game returned an invalid game-over result.".into(),
-            ));
+            return Err(SdkError::protocol(SdkErrorCode::InvalidGameOverPolicy));
         }
     }
     Ok(())
 }
 
+fn private_views_required(manifest: &GameManifest) -> bool {
+    manifest.player_view_mode == Some(PlayerViewMode::Private)
+}
+
+fn validate_active_roster(players: &[String], manifest: &GameManifest) -> Result<(), SdkError> {
+    let unique = players.iter().collect::<HashSet<_>>();
+    if players.is_empty()
+        || players.len() > manifest.max_players as usize
+        || players.len() > 100
+        || unique.len() != players.len()
+        || players.iter().any(|player_id| player_id.trim().is_empty())
+    {
+        return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
+    }
+    Ok(())
+}
+
+fn projected_roster(
+    current: &[String],
+    events: &[StreamStepEvent],
+    manifest: &GameManifest,
+) -> Result<Vec<String>, SdkError> {
+    let mut players = current.to_vec();
+    for event in events {
+        match event {
+            StreamStepEvent::Join { player_id } => {
+                if player_id.trim().is_empty() {
+                    return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
+                }
+                if !players.contains(player_id) {
+                    players.push(player_id.clone());
+                    validate_active_roster(&players, manifest)?;
+                }
+            }
+            StreamStepEvent::Leave { player_id } => {
+                let Some(index) = players.iter().position(|active| active == player_id) else {
+                    return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
+                };
+                players.remove(index);
+            }
+            StreamStepEvent::Command { command } => {
+                if command.command_type.trim().is_empty() {
+                    return Err(SdkError::protocol(SdkErrorCode::InvalidAction));
+                }
+            }
+        }
+    }
+    Ok(players)
+}
+
+fn validate_inputs_against_roster(
+    inputs: &[TickInput],
+    players: &[String],
+) -> Result<(), SdkError> {
+    let mut action_ids = HashSet::new();
+    for input in inputs {
+        if !players.contains(&input.player_id) {
+            return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
+        }
+        if let Some(action_id) = &input.action_id {
+            if !action_ids.insert(action_id.as_str()) {
+                return Err(SdkError::protocol(SdkErrorCode::InvalidAction));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_resync_players(resync_players: &[String], players: &[String]) -> Result<(), SdkError> {
+    let mut unique = HashSet::new();
+    if resync_players
+        .iter()
+        .any(|player_id| !players.contains(player_id) || !unique.insert(player_id))
+    {
+        return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
+    }
+    Ok(())
+}
+
+fn validate_step_payload(
+    current_players: &[String],
+    manifest: &GameManifest,
+    tick_rate_hz: f64,
+    tick: u64,
+    inputs: &[TickInput],
+    events: &[StreamStepEvent],
+    resync_players: &[String],
+) -> Result<(), SdkError> {
+    let players = projected_roster(current_players, events, manifest)?;
+    validate_inputs_against_roster(inputs, &players)?;
+    validate_resync_players(resync_players, &players)?;
+    TickContext {
+        tick,
+        elapsed_seconds: tick as f64 / tick_rate_hz,
+        inputs: inputs.to_vec(),
+        commands: Vec::new(),
+    }
+    .validate()
+    .map_err(|_| SdkError::protocol(SdkErrorCode::InvalidAction))?;
+    Ok(())
+}
+
 fn error_frame(tick: Option<u64>, err: SdkError) -> StreamServerMessage {
-    match err {
-        SdkError::Validation(msg) => StreamServerMessage::Error {
-            tick,
-            code: "VALIDATION_ERROR".into(),
-            error: msg,
-        },
-        _ => StreamServerMessage::Error {
-            tick,
-            code: "INTERNAL_ERROR".into(),
-            error: "Internal server error.".into(),
-        },
+    let code = err.code();
+    let error = match err {
+        SdkError::Protocol { message, .. } | SdkError::Validation(message) => message,
+        _ => code.creator_action().to_string(),
+    };
+    StreamServerMessage::Error {
+        tick,
+        code: code.as_str().into(),
+        retryable: code.retryable(),
+        creator_action: code.creator_action().into(),
+        error,
     }
 }
 
@@ -628,6 +782,8 @@ struct ValueSessionData {
     tick_rate_hz: f64,
     tick: u64,
     state: Value,
+    players: Vec<String>,
+    manifest: GameManifest,
     game_over: bool,
 }
 
@@ -639,24 +795,40 @@ struct ValueStreamSession<G: GameServer> {
 impl<G: GameServer> ValueStreamSession<G> {
     async fn apply_step_internal(
         game: &G,
+        manifest: &GameManifest,
         tick_rate_hz: f64,
         state: Value,
+        current_players: &[String],
         tick: u64,
         inputs: Vec<TickInput>,
         events: Vec<StreamStepEvent>,
+        resync_players: &[String],
     ) -> Result<
         (
             Value,
+            Vec<String>,
             Vec<Value>,
             bool,
             Option<bool>,
             Option<HashMap<String, Value>>,
             Vec<GameResultEvent>,
+            Option<Vec<GameActionResult>>,
             GameResult,
         ),
         SdkError,
     > {
         let mut cur_state = state;
+        validate_step_payload(
+            current_players,
+            manifest,
+            tick_rate_hz,
+            tick,
+            &inputs,
+            &events,
+            resync_players,
+        )?;
+        let private_views = private_views_required(manifest);
+        let mut players = current_players.to_vec();
         let mut broadcasts = Vec::new();
         let mut result_units = Vec::new();
         let mut joinable = None;
@@ -665,16 +837,22 @@ impl<G: GameServer> ValueStreamSession<G> {
         for ev in events {
             match ev {
                 StreamStepEvent::Join { player_id } => {
-                    if player_id.trim().is_empty() {
-                        return Err(SdkError::Validation("playerId must be non-empty.".into()));
+                    if !players.contains(&player_id) {
+                        players.push(player_id.clone());
                     }
                     let req = PlayerEventRequest {
                         player_id,
                         state: cur_state,
+                        players: Some(players.clone()),
                         extra: HashMap::new(),
                     };
                     let res = guard_unwind(game.on_player_join_ext(req)).await?;
-                    validate_game_result_units(res.result_units.as_deref(), None)?;
+                    validate_result_units(res.result_units.as_deref())?;
+                    validate_player_views(
+                        res.player_views.as_ref(),
+                        Some(&players),
+                        private_views,
+                    )?;
                     cur_state = res.state;
                     if let Some(b) = res.broadcasts {
                         broadcasts.extend(b);
@@ -690,16 +868,22 @@ impl<G: GameServer> ValueStreamSession<G> {
                     }
                 }
                 StreamStepEvent::Leave { player_id } => {
-                    if player_id.trim().is_empty() {
-                        return Err(SdkError::Validation("playerId must be non-empty.".into()));
+                    if let Some(index) = players.iter().position(|active| active == &player_id) {
+                        players.remove(index);
                     }
                     let req = PlayerEventRequest {
                         player_id,
                         state: cur_state,
+                        players: Some(players.clone()),
                         extra: HashMap::new(),
                     };
                     let res = guard_unwind(game.on_player_leave_ext(req)).await?;
-                    validate_game_result_units(res.result_units.as_deref(), None)?;
+                    validate_result_units(res.result_units.as_deref())?;
+                    validate_player_views(
+                        res.player_views.as_ref(),
+                        Some(&players),
+                        private_views,
+                    )?;
                     cur_state = res.state;
                     if let Some(b) = res.broadcasts {
                         broadcasts.extend(b);
@@ -721,7 +905,12 @@ impl<G: GameServer> ValueStreamSession<G> {
                         ));
                     }
                     let res = guard_unwind(game.on_command(command, cur_state)).await?;
-                    validate_game_result_units(res.result_units.as_deref(), None)?;
+                    validate_result_units(res.result_units.as_deref())?;
+                    validate_player_views(
+                        res.player_views.as_ref(),
+                        Some(&players),
+                        private_views,
+                    )?;
                     cur_state = res.state;
                     if let Some(b) = res.broadcasts {
                         broadcasts.extend(b);
@@ -739,16 +928,28 @@ impl<G: GameServer> ValueStreamSession<G> {
             }
         }
 
+        let submitted_action_ids = inputs
+            .iter()
+            .filter_map(|input| input.action_id.clone())
+            .collect::<HashSet<_>>();
         let ctx = TickContext {
             tick,
             elapsed_seconds: tick as f64 / tick_rate_hz,
             inputs,
             commands: Vec::new(),
         };
-        ctx.validate()?;
         let tick_res = guard_unwind(game.tick(ctx, cur_state)).await?;
-        validate_game_result_units(tick_res.result_units.as_deref(), None)?;
-        validate_action_results_contract(tick_res.action_results.as_deref())?;
+        validate_result_units(tick_res.result_units.as_deref())?;
+        validate_action_results_contract(
+            tick_res.action_results.as_deref(),
+            &submitted_action_ids,
+        )?;
+        validate_player_views(
+            tick_res.player_views.as_ref(),
+            Some(&players),
+            private_views,
+        )?;
+        let action_results = tick_res.action_results.clone();
         cur_state = tick_res.state;
         if let Some(b) = tick_res.broadcasts {
             broadcasts.extend(b);
@@ -775,14 +976,17 @@ impl<G: GameServer> ValueStreamSession<G> {
         if game_result.over {
             joinable = joinable.map(|_| false);
         }
+        validate_player_views(player_views.as_ref(), Some(&players), private_views)?;
 
         Ok((
             cur_state,
+            players,
             broadcasts,
             tick_res.persist,
             joinable,
             player_views,
             result_units,
+            action_results,
             game_result,
         ))
     }
@@ -797,22 +1001,58 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                 tick_rate_hz,
                 tick,
                 state,
+                players,
+                player_views,
                 replay,
-                resync_players: _,
+                resync_players,
             } => {
+                self.active = None;
+                if match_id.trim().is_empty() || tick > 9_007_199_254_740_991 {
+                    return error_frame(
+                        Some(tick),
+                        SdkError::protocol(SdkErrorCode::InvalidStreamMessage),
+                    );
+                }
                 if !tick_rate_hz.is_finite() || !(1.0..=60.0).contains(&tick_rate_hz) {
                     return error_frame(
                         Some(tick),
-                        SdkError::Validation("tickRateHz must be between 1 and 60.".into()),
+                        SdkError::protocol_with_message(
+                            SdkErrorCode::InvalidStreamMessage,
+                            "tickRateHz must be between 1 and 60.",
+                        ),
                     );
+                }
+                let manifest = match guard_unwind(self.game.manifest()).await {
+                    Ok(manifest) => manifest,
+                    Err(error) => return error_frame(Some(tick), error),
+                };
+                if manifest.validate().is_err() {
+                    return error_frame(
+                        Some(tick),
+                        SdkError::protocol(SdkErrorCode::InvalidManifest),
+                    );
+                }
+                if let Err(error) = validate_active_roster(&players, &manifest)
+                    .and_then(|_| validate_resync_players(&resync_players, &players))
+                {
+                    return error_frame(Some(tick), error);
+                }
+                let had_replay = !replay.is_empty();
+                if let Err(error) = validate_player_views(
+                    player_views.as_ref(),
+                    Some(&players),
+                    private_views_required(&manifest) && !had_replay,
+                ) {
+                    return error_frame(Some(tick), error);
                 }
                 let mut cur_tick = tick;
                 let mut cur_state = state;
+                let mut cur_players = players;
                 let mut all_broadcasts = Vec::new();
                 let mut all_units = Vec::new();
+                let mut all_action_results = Vec::new();
                 let mut joinable = None;
-                let mut last_views = None;
-                let had_replay = !replay.is_empty();
+                let mut last_views = if had_replay { None } else { player_views };
 
                 let mut game_result =
                     match guard_unwind(self.game.is_game_over_ext(IsGameOverRequest {
@@ -834,30 +1074,34 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                     };
 
                 for step in replay {
-                    if game_result.over {
-                        break;
-                    }
-                    if step.tick != cur_tick + 1 {
+                    if game_result.over || cur_tick.checked_add(1) != Some(step.tick) {
                         return error_frame(
                             Some(step.tick),
-                            SdkError::Validation("Replay ticks must be contiguous.".into()),
+                            SdkError::protocol(SdkErrorCode::ReplayMismatch),
                         );
                     }
                     match Self::apply_step_internal(
                         &self.game,
+                        &manifest,
                         tick_rate_hz,
                         cur_state,
+                        &cur_players,
                         step.tick,
                         step.inputs,
                         step.events,
+                        &[],
                     )
                     .await
                     {
-                        Ok((next_s, b, _persist, j, views, units, gr)) => {
+                        Ok((next_s, next_players, b, _persist, j, views, units, actions, gr)) => {
                             cur_tick = step.tick;
                             cur_state = next_s;
+                            cur_players = next_players;
                             all_broadcasts.extend(b);
                             all_units.extend(units);
+                            if let Some(actions) = actions {
+                                all_action_results.extend(actions);
+                            }
                             if j.is_some() {
                                 joinable = j;
                             }
@@ -877,6 +1121,8 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                     tick_rate_hz,
                     tick: cur_tick,
                     state: cur_state,
+                    players: cur_players,
+                    manifest,
                     game_over: game_result.over,
                 });
                 StreamServerMessage::Hydrated {
@@ -887,6 +1133,7 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                     broadcasts: all_broadcasts,
                     joinable,
                     result_units: all_units,
+                    action_results: all_action_results,
                     game_result,
                 }
             }
@@ -894,40 +1141,69 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                 tick,
                 inputs,
                 events,
-                resync_players: _,
+                resync_players,
                 want_state,
             } => {
                 let Some(session) = self.active.as_mut() else {
                     return error_frame(
                         Some(tick),
-                        SdkError::Validation("Stream session is not hydrated.".into()),
+                        SdkError::protocol(SdkErrorCode::InvalidStreamMessage),
                     );
                 };
                 if session.game_over {
                     return StreamServerMessage::IgnoredAfterGameOver { tick };
                 }
-                if tick != session.tick + 1 {
+                if tick > 9_007_199_254_740_991 || session.tick.checked_add(1) != Some(tick) {
                     return error_frame(
                         Some(tick),
-                        SdkError::Validation(format!(
-                            "Expected tick {}, got {tick}.",
-                            session.tick + 1
-                        )),
+                        SdkError::protocol_with_message(
+                            SdkErrorCode::TickSequenceMismatch,
+                            format!(
+                                "Expected tick {}, got {tick}.",
+                                session.tick.saturating_add(1)
+                            ),
+                        ),
                     );
+                }
+                let manifest = session.manifest.clone();
+                if let Err(error) = validate_step_payload(
+                    &session.players,
+                    &manifest,
+                    session.tick_rate_hz,
+                    tick,
+                    &inputs,
+                    &events,
+                    &resync_players,
+                ) {
+                    return error_frame(Some(tick), error);
                 }
                 let had_events = !events.is_empty();
                 let prev_state = std::mem::replace(&mut session.state, Value::Null);
+                let current_players = session.players.clone();
                 match Self::apply_step_internal(
                     &self.game,
+                    &manifest,
                     session.tick_rate_hz,
                     prev_state,
+                    &current_players,
                     tick,
                     inputs,
                     events,
+                    &resync_players,
                 )
                 .await
                 {
-                    Ok((next_state, broadcasts, persist, joinable, player_views, units, gr)) => {
+                    Ok((
+                        next_state,
+                        players,
+                        broadcasts,
+                        persist,
+                        joinable,
+                        player_views,
+                        units,
+                        action_results,
+                        gr,
+                    )) => {
                         let include_state =
                             want_state || had_events || persist || !units.is_empty() || gr.over;
                         let out_state = if include_state {
@@ -938,6 +1214,7 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                         session.tick = tick;
                         session.game_over = gr.over;
                         session.state = next_state;
+                        session.players = players;
                         StreamServerMessage::StepResult {
                             tick,
                             state: out_state,
@@ -946,6 +1223,7 @@ impl<G: GameServer> ActiveStreamSession for ValueStreamSession<G> {
                             persist,
                             joinable,
                             result_units: units,
+                            action_results,
                             game_result: gr,
                         }
                     }
@@ -975,6 +1253,8 @@ struct TypedSessionData<T: TypedGameServer> {
     tick_rate_hz: f64,
     tick: u64,
     state: T::State,
+    players: Vec<String>,
+    manifest: GameManifest,
     view_ctx: T::ViewContext,
     game_over: bool,
 }
@@ -987,8 +1267,10 @@ struct TypedStreamSession<T: TypedGameServer> {
 impl<T: TypedGameServer> TypedStreamSession<T> {
     async fn apply_typed_step(
         game: &T,
+        manifest: &GameManifest,
         tick_rate_hz: f64,
         state: &mut T::State,
+        current_players: &[String],
         view_ctx: &mut T::ViewContext,
         tick: u64,
         inputs: Vec<TickInput>,
@@ -997,15 +1279,28 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
         emit_views: bool,
     ) -> Result<
         (
+            Vec<String>,
             Vec<Value>,
             bool,
             Option<bool>,
             Option<HashMap<String, Value>>,
             Vec<GameResultEvent>,
+            Option<Vec<GameActionResult>>,
             GameResult,
         ),
         SdkError,
     > {
+        validate_step_payload(
+            current_players,
+            manifest,
+            tick_rate_hz,
+            tick,
+            &inputs,
+            &events,
+            resync_players,
+        )?;
+        let private_views = private_views_required(manifest);
+        let mut players = current_players.to_vec();
         for pid in resync_players {
             game.reset_player_view(view_ctx, pid);
         }
@@ -1017,13 +1312,19 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
         for ev in events {
             match ev {
                 StreamStepEvent::Join { player_id } => {
-                    if player_id.trim().is_empty() {
-                        return Err(SdkError::Validation("playerId must be non-empty.".into()));
+                    if !players.contains(&player_id) {
+                        players.push(player_id.clone());
+                        validate_active_roster(&players, manifest)?;
                     }
                     game.reset_player_view(view_ctx, &player_id);
                     let out = guard_unwind(game.on_player_join_typed(&player_id, state, view_ctx))
                         .await?;
-                    validate_game_result_units(out.result_units.as_deref(), None)?;
+                    validate_result_units(out.result_units.as_deref())?;
+                    validate_player_views(
+                        out.player_views.as_ref(),
+                        Some(&players),
+                        private_views,
+                    )?;
                     if let Some(b) = out.broadcasts {
                         broadcasts.extend(b);
                     }
@@ -1038,13 +1339,19 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
                     }
                 }
                 StreamStepEvent::Leave { player_id } => {
-                    if player_id.trim().is_empty() {
-                        return Err(SdkError::Validation("playerId must be non-empty.".into()));
-                    }
+                    let Some(index) = players.iter().position(|active| active == &player_id) else {
+                        return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
+                    };
+                    players.remove(index);
                     game.reset_player_view(view_ctx, &player_id);
                     let out = guard_unwind(game.on_player_leave_typed(&player_id, state, view_ctx))
                         .await?;
-                    validate_game_result_units(out.result_units.as_deref(), None)?;
+                    validate_result_units(out.result_units.as_deref())?;
+                    validate_player_views(
+                        out.player_views.as_ref(),
+                        Some(&players),
+                        private_views,
+                    )?;
                     if let Some(b) = out.broadcasts {
                         broadcasts.extend(b);
                     }
@@ -1065,7 +1372,12 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
                         ));
                     }
                     let out = guard_unwind(game.on_command_typed(command, state, view_ctx)).await?;
-                    validate_game_result_units(out.result_units.as_deref(), None)?;
+                    validate_result_units(out.result_units.as_deref())?;
+                    validate_player_views(
+                        out.player_views.as_ref(),
+                        Some(&players),
+                        private_views,
+                    )?;
                     if let Some(b) = out.broadcasts {
                         broadcasts.extend(b);
                     }
@@ -1082,16 +1394,28 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
             }
         }
 
+        let submitted_action_ids = inputs
+            .iter()
+            .filter_map(|input| input.action_id.clone())
+            .collect::<HashSet<_>>();
         let ctx = TickContext {
             tick,
             elapsed_seconds: tick as f64 / tick_rate_hz,
             inputs,
             commands: Vec::new(),
         };
-        ctx.validate()?;
         let tick_out = guard_unwind(game.step_typed(ctx, state, view_ctx, emit_views)).await?;
-        validate_game_result_units(tick_out.result_units.as_deref(), None)?;
-        validate_action_results_contract(tick_out.action_results.as_deref())?;
+        validate_result_units(tick_out.result_units.as_deref())?;
+        validate_action_results_contract(
+            tick_out.action_results.as_deref(),
+            &submitted_action_ids,
+        )?;
+        validate_player_views(
+            tick_out.player_views.as_ref(),
+            Some(&players),
+            private_views,
+        )?;
+        let action_results = tick_out.action_results.clone();
         if let Some(b) = tick_out.broadcasts {
             broadcasts.extend(b);
         }
@@ -1113,13 +1437,16 @@ impl<T: TypedGameServer> TypedStreamSession<T> {
         if game_result.over {
             joinable = joinable.map(|_| false);
         }
+        validate_player_views(player_views.as_ref(), Some(&players), private_views)?;
 
         Ok((
+            players,
             broadcasts,
             tick_out.persist,
             joinable,
             player_views,
             result_units,
+            action_results,
             game_result,
         ))
     }
@@ -1134,33 +1461,76 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                 tick_rate_hz,
                 tick,
                 state: state_val,
+                players,
+                player_views,
                 replay,
                 resync_players,
             } => {
+                self.active = None;
+                if match_id.trim().is_empty() || tick > 9_007_199_254_740_991 {
+                    return error_frame(
+                        Some(tick),
+                        SdkError::protocol(SdkErrorCode::InvalidStreamMessage),
+                    );
+                }
                 if !tick_rate_hz.is_finite() || !(1.0..=60.0).contains(&tick_rate_hz) {
                     return error_frame(
                         Some(tick),
-                        SdkError::Validation("tickRateHz must be between 1 and 60.".into()),
+                        SdkError::protocol_with_message(
+                            SdkErrorCode::InvalidStreamMessage,
+                            "tickRateHz must be between 1 and 60.",
+                        ),
                     );
+                }
+                let manifest = match guard_unwind(self.game.manifest()).await {
+                    Ok(manifest) => manifest,
+                    Err(error) => return error_frame(Some(tick), error),
+                };
+                if manifest.validate().is_err() {
+                    return error_frame(
+                        Some(tick),
+                        SdkError::protocol(SdkErrorCode::InvalidManifest),
+                    );
+                }
+                if let Err(error) = validate_active_roster(&players, &manifest)
+                    .and_then(|_| validate_resync_players(&resync_players, &players))
+                {
+                    return error_frame(Some(tick), error);
                 }
                 let mut typed_state: T::State = match serde_json::from_value(state_val) {
                     Ok(s) => s,
                     Err(e) => {
                         return error_frame(
                             Some(tick),
-                            SdkError::Validation(format!("Invalid checkpoint state: {e}")),
+                            SdkError::protocol_with_message(
+                                SdkErrorCode::InvalidState,
+                                format!("Invalid checkpoint state: {e}"),
+                            ),
                         )
                     }
                 };
+                if let Err(error) = validate_player_views(
+                    player_views.as_ref(),
+                    Some(&players),
+                    private_views_required(&manifest) && replay.is_empty(),
+                ) {
+                    return error_frame(Some(tick), error);
+                }
                 let mut view_ctx = T::ViewContext::default();
                 for pid in &resync_players {
                     self.game.reset_player_view(&mut view_ctx, pid);
                 }
                 let mut cur_tick = tick;
+                let mut cur_players = players;
                 let mut all_broadcasts = Vec::new();
                 let mut all_units = Vec::new();
+                let mut all_action_results = Vec::new();
                 let mut joinable = None;
-                let mut last_views = None;
+                let mut last_views = if replay.is_empty() {
+                    player_views
+                } else {
+                    None
+                };
                 let replay_len = replay.len();
 
                 let mut game_result =
@@ -1178,20 +1548,19 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                     };
 
                 for (idx, step) in replay.into_iter().enumerate() {
-                    if game_result.over {
-                        break;
-                    }
-                    if step.tick != cur_tick + 1 {
+                    if game_result.over || cur_tick.checked_add(1) != Some(step.tick) {
                         return error_frame(
                             Some(step.tick),
-                            SdkError::Validation("Replay ticks must be contiguous.".into()),
+                            SdkError::protocol(SdkErrorCode::ReplayMismatch),
                         );
                     }
                     let is_last = idx + 1 == replay_len;
                     match Self::apply_typed_step(
                         &self.game,
+                        &manifest,
                         tick_rate_hz,
                         &mut typed_state,
+                        &cur_players,
                         &mut view_ctx,
                         step.tick,
                         step.inputs,
@@ -1201,10 +1570,14 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                     )
                     .await
                     {
-                        Ok((b, _persist, j, views, units, gr)) => {
+                        Ok((next_players, b, _persist, j, views, units, actions, gr)) => {
                             cur_tick = step.tick;
+                            cur_players = next_players;
                             all_broadcasts.extend(b);
                             all_units.extend(units);
+                            if let Some(actions) = actions {
+                                all_action_results.extend(actions);
+                            }
                             if j.is_some() {
                                 joinable = j;
                             }
@@ -1235,6 +1608,8 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                     tick_rate_hz,
                     tick: cur_tick,
                     state: typed_state,
+                    players: cur_players,
+                    manifest,
                     view_ctx,
                     game_over: game_result.over,
                 });
@@ -1247,6 +1622,7 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                     broadcasts: all_broadcasts,
                     joinable,
                     result_units: all_units,
+                    action_results: all_action_results,
                     game_result,
                 }
             }
@@ -1260,26 +1636,44 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                 let Some(session) = self.active.as_mut() else {
                     return error_frame(
                         Some(tick),
-                        SdkError::Validation("Stream session is not hydrated.".into()),
+                        SdkError::protocol(SdkErrorCode::InvalidStreamMessage),
                     );
                 };
                 if session.game_over {
                     return StreamServerMessage::IgnoredAfterGameOver { tick };
                 }
-                if tick != session.tick + 1 {
+                if tick > 9_007_199_254_740_991 || session.tick.checked_add(1) != Some(tick) {
                     return error_frame(
                         Some(tick),
-                        SdkError::Validation(format!(
-                            "Expected tick {}, got {tick}.",
-                            session.tick + 1
-                        )),
+                        SdkError::protocol_with_message(
+                            SdkErrorCode::TickSequenceMismatch,
+                            format!(
+                                "Expected tick {}, got {tick}.",
+                                session.tick.saturating_add(1)
+                            ),
+                        ),
                     );
                 }
+                let manifest = session.manifest.clone();
+                if let Err(error) = validate_step_payload(
+                    &session.players,
+                    &manifest,
+                    session.tick_rate_hz,
+                    tick,
+                    &inputs,
+                    &events,
+                    &resync_players,
+                ) {
+                    return error_frame(Some(tick), error);
+                }
                 let had_events = !events.is_empty();
+                let current_players = session.players.clone();
                 match Self::apply_typed_step(
                     &self.game,
+                    &manifest,
                     session.tick_rate_hz,
                     &mut session.state,
+                    &current_players,
                     &mut session.view_ctx,
                     tick,
                     inputs,
@@ -1289,7 +1683,16 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                 )
                 .await
                 {
-                    Ok((broadcasts, persist, joinable, player_views, units, gr)) => {
+                    Ok((
+                        players,
+                        broadcasts,
+                        persist,
+                        joinable,
+                        player_views,
+                        units,
+                        action_results,
+                        gr,
+                    )) => {
                         let include_state =
                             want_state || had_events || persist || !units.is_empty() || gr.over;
                         let out_state = if include_state {
@@ -1309,6 +1712,7 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                             None
                         };
                         session.tick = tick;
+                        session.players = players;
                         session.game_over = gr.over;
                         StreamServerMessage::StepResult {
                             tick,
@@ -1318,6 +1722,7 @@ impl<T: TypedGameServer> ActiveStreamSession for TypedStreamSession<T> {
                             persist,
                             joinable,
                             result_units: units,
+                            action_results,
                             game_result: gr,
                         }
                     }
@@ -1342,7 +1747,7 @@ pub async fn serve_stream_socket(mut socket: WebSocket, factory: Arc<dyn StreamS
                 Err(_) => {
                     let _ = send_frame(
                         &mut socket,
-                        &error_frame(None, SdkError::Validation("Expected UTF-8 JSON.".into())),
+                        &error_frame(None, SdkError::protocol(SdkErrorCode::InvalidStreamMessage)),
                     )
                     .await;
                     continue;
@@ -1363,7 +1768,7 @@ pub async fn serve_stream_socket(mut socket: WebSocket, factory: Arc<dyn StreamS
                 &mut socket,
                 &error_frame(
                     None,
-                    SdkError::Validation("Stream frame must not exceed 1 MiB.".into()),
+                    SdkError::protocol(SdkErrorCode::ResourceLimitExceeded),
                 ),
             )
             .await;
@@ -1375,10 +1780,7 @@ pub async fn serve_stream_socket(mut socket: WebSocket, factory: Arc<dyn StreamS
             Err(_) => {
                 let _ = send_frame(
                     &mut socket,
-                    &error_frame(
-                        None,
-                        SdkError::Validation("Invalid stream JSON message.".into()),
-                    ),
+                    &error_frame(None, SdkError::protocol(SdkErrorCode::InvalidStreamMessage)),
                 )
                 .await;
                 continue;

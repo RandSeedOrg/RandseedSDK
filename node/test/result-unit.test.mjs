@@ -123,7 +123,7 @@ test("the Node host returns valid transition results and rejects invalid result 
     }),
   });
   assert.equal(invalidResponse.status, 500);
-  assert.deepEqual(await invalidResponse.json(), {
-    error: "Internal server error.",
-  });
+  const invalidBody = await invalidResponse.json();
+  assert.equal(invalidBody.code, "INVALID_RESULT");
+  assert.equal(invalidBody.retryable, false);
 });

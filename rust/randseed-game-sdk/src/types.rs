@@ -3,11 +3,14 @@
 //! Structs and serialization names follow the room-host wire protocol.
 
 use crate::agent_player_view::{valid_action_code, valid_key, valid_schema_id};
-use crate::errors::SdkError;
+use crate::errors::{SdkError, SdkErrorCode};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+/// Maximum serialized size of a single room-host player view.
+pub const MAX_PLAYER_VIEW_BYTES: usize = 64 * 1024;
+const MAX_PLAYER_VIEWS_BYTES: usize = 1024 * 1024;
 const MAX_RESULT_EVENT_BYTES: usize = 256 * 1024;
 const MAX_RESULT_PARTICIPANTS: usize = 1000;
 const MAX_RESULT_TEAMS: usize = 256;
@@ -642,6 +645,13 @@ pub struct GameManifest {
     /// Optional JSON Schema for match options.
     #[serde(rename = "optionsSchema", skip_serializing_if = "Option::is_none")]
     pub options_schema: Option<serde_json::Value>,
+    /// Require recipient-specific views for every active seat.
+    #[serde(
+        rename = "playerViewMode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub player_view_mode: Option<PlayerViewMode>,
     /// Optional versioned result-unit and metric declaration.
     #[serde(
         rename = "resultDefinition",
@@ -656,40 +666,107 @@ impl GameManifest {
     /// Validate the manifest against the room-host protocol limits.
     pub fn validate(&self) -> Result<(), SdkError> {
         if self.title.trim().is_empty() {
-            return Err(SdkError::Validation(
-                "title must be a non-empty string.".into(),
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "title must be a non-empty string.",
             ));
         }
         if self.version.trim().is_empty() {
-            return Err(SdkError::Validation(
-                "version must be a non-empty string.".into(),
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "version must be a non-empty string.",
             ));
         }
         if self.min_players < 1 {
-            return Err(SdkError::Validation(
-                "minPlayers must be at least 1.".into(),
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "minPlayers must be at least 1.",
             ));
         }
         if self.max_players < self.min_players {
-            return Err(SdkError::Validation(
-                "maxPlayers must not be less than minPlayers.".into(),
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "maxPlayers must not be less than minPlayers.",
             ));
         }
         if self.max_players > 100 {
-            return Err(SdkError::Validation(
-                "maxPlayers must not exceed 100.".into(),
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "maxPlayers must not exceed 100.",
             ));
         }
         if !self.tick_rate_hz.is_finite() || !(1.0..=60.0).contains(&self.tick_rate_hz) {
-            return Err(SdkError::Validation(
-                "tickRateHz must be a finite number between 1 and 60.".into(),
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "tickRateHz must be a finite number between 1 and 60.",
             ));
         }
         if let Some(definition) = &self.result_definition {
-            definition.validate()?;
+            definition
+                .validate()
+                .map_err(|_| SdkError::protocol(SdkErrorCode::InvalidManifest))?;
         }
         Ok(())
     }
+}
+
+/// Privacy mode for live per-player state projections.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayerViewMode {
+    /// Every transition must return one view for each active roster seat.
+    Private,
+}
+
+/// Validate a transition's per-player projection map and its resource limits.
+pub fn validate_player_views(
+    views: Option<&HashMap<String, serde_json::Value>>,
+    players: Option<&[String]>,
+    required: bool,
+) -> Result<(), SdkError> {
+    let Some(views) = views else {
+        return if required {
+            Err(SdkError::protocol(SdkErrorCode::InvalidResult))
+        } else {
+            Ok(())
+        };
+    };
+
+    let Some(players) = players else {
+        return Err(SdkError::protocol_with_message(
+            SdkErrorCode::WrongRoster,
+            "playerViews require an active players roster.",
+        ));
+    };
+    if views.keys().any(|player_id| player_id.trim().is_empty()) {
+        return Err(SdkError::protocol_with_message(
+            SdkErrorCode::InvalidResult,
+            "playerViews keys must be non-empty player IDs.",
+        ));
+    }
+    let expected = players.iter().collect::<HashSet<_>>();
+    let actual = views.keys().collect::<HashSet<_>>();
+    if expected != actual {
+        return Err(SdkError::protocol_with_message(
+            SdkErrorCode::InvalidResult,
+            "playerViews must contain exactly one entry per active roster seat.",
+        ));
+    }
+
+    let mut total_bytes = 0usize;
+    for view in views.values() {
+        let size = serde_json::to_vec(view)
+            .map_err(|_| SdkError::protocol(SdkErrorCode::InvalidResult))?
+            .len();
+        if size > MAX_PLAYER_VIEW_BYTES {
+            return Err(SdkError::protocol(SdkErrorCode::ResourceLimitExceeded));
+        }
+        total_bytes = total_bytes.saturating_add(size);
+    }
+    if total_bytes > MAX_PLAYER_VIEWS_BYTES {
+        return Err(SdkError::protocol(SdkErrorCode::ResourceLimitExceeded));
+    }
+    Ok(())
 }
 
 /// Match options, including the numeric seed used by deterministic games.
@@ -853,31 +930,24 @@ impl MatchConfig {
             ));
         }
         if self.players.is_empty() {
-            return Err(SdkError::Validation(
-                "players must be a non-empty array.".into(),
-            ));
+            return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
         }
         if self.players.len() > 100 {
-            return Err(SdkError::Validation(
-                "players must not contain more than 100 entries.".into(),
-            ));
+            return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
         }
         let mut unique_players = HashSet::with_capacity(self.players.len());
         for player_id in &self.players {
             if player_id.trim().is_empty() {
-                return Err(SdkError::Validation(
-                    "player IDs must be non-empty strings.".into(),
-                ));
+                return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
             }
             if !unique_players.insert(player_id) {
-                return Err(SdkError::Validation(
-                    "players must contain unique player IDs.".into(),
-                ));
+                return Err(SdkError::protocol(SdkErrorCode::WrongRoster));
             }
         }
         if !self.options.seed.is_finite() {
-            return Err(SdkError::Validation(
-                "options.seed must be a finite number.".into(),
+            return Err(SdkError::protocol_with_message(
+                crate::errors::SdkErrorCode::InvalidOptions,
+                "options.seed must be a finite number.",
             ));
         }
         if let Some(tick_rate_hz) = self.tick_rate_hz {
@@ -991,6 +1061,9 @@ impl<'de> Deserialize<'de> for TickInput {
                 }
                 val
             }
+            None if raw.extra.is_empty() => {
+                return Err(serde::de::Error::missing_field("data"));
+            }
             None => serde_json::Value::Object(raw.extra),
         };
 
@@ -1006,6 +1079,7 @@ impl<'de> Deserialize<'de> for TickInput {
 
 /// A trusted command issued by the room host or an administrator.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct GameCommand {
     /// Command type.
     #[serde(rename = "type")]
@@ -1305,6 +1379,9 @@ pub struct TickRequest {
     pub ctx: TickContext,
     /// Current game state.
     pub state: serde_json::Value,
+    /// Active roster used to validate actions and per-player projections.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub players: Vec<String>,
 }
 
 /// Request payload for a player lifecycle event.
@@ -1315,6 +1392,9 @@ pub struct PlayerEventRequest {
     pub player_id: String,
     /// Current game state.
     pub state: serde_json::Value,
+    /// Active roster after this join or leave event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub players: Option<Vec<String>>,
     /// Optional flattened extension fields (such as a player profile object).
     #[serde(default, flatten, skip_serializing_if = "HashMap::is_empty")]
     pub extra: HashMap<String, serde_json::Value>,
@@ -1377,6 +1457,9 @@ pub struct CommandRequest {
     pub command: GameCommand,
     /// Current game state.
     pub state: serde_json::Value,
+    /// Active roster used to validate per-player projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub players: Option<Vec<String>>,
 }
 
 /// Response payload for `GET /health`.

@@ -1,4 +1,5 @@
 import type { GameCommand, GameManifest, JsonValue, MatchConfig, TickContext } from "./types.js";
+import { SdkProtocolError } from "./errors.js";
 import {
   isValidActionSchemaId,
   isValidProtocolKey,
@@ -87,6 +88,9 @@ export function validateGameManifest(manifest: unknown): asserts manifest is Gam
   if (typeof manifest.persistentTable !== "boolean") {
     throw new Error("persistentTable must be a boolean.");
   }
+  if (Object.hasOwn(manifest, "playerViewMode") && manifest.playerViewMode !== "private") {
+    throw new SdkProtocolError("INVALID_MANIFEST", "playerViewMode must be 'private' when provided.");
+  }
   if (Object.hasOwn(manifest, "optionsSchema")) {
     const schema = manifest.optionsSchema;
     if (typeof schema !== "boolean" && !isRecord(schema)) {
@@ -95,7 +99,14 @@ export function validateGameManifest(manifest: unknown): asserts manifest is Gam
     validateJsonValue(schema);
   }
   if (Object.hasOwn(manifest, "resultDefinition")) {
-    validateGameResultDefinition(manifest.resultDefinition);
+    try {
+      validateGameResultDefinition(manifest.resultDefinition);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      throw new SdkProtocolError(
+        /limit|exceeds/i.test(message) ? "RESOURCE_LIMIT_EXCEEDED" : "INVALID_MANIFEST",
+      );
+    }
   }
 }
 
@@ -110,12 +121,12 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
     throw new Error("gameId must be a non-empty string.");
   }
   if (!Array.isArray(config.players) || config.players.length === 0 || config.players.length > 100) {
-    throw new Error("players must contain between 1 and 100 player IDs.");
+    throw new SdkProtocolError("WRONG_ROSTER", "players must contain between 1 and 100 player IDs.");
   }
   const players = new Set<string>();
   for (const playerId of config.players) {
     if (!isNonEmptyString(playerId) || players.has(playerId)) {
-      throw new Error("players must contain unique, non-empty player IDs.");
+      throw new SdkProtocolError("WRONG_ROSTER", "players must contain unique, non-empty player IDs.");
     }
     players.add(playerId);
   }
@@ -124,17 +135,21 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
   }
   const hasOptions = Object.hasOwn(config, "options");
   if (hasOptions && !isRecord(config.options)) {
-    throw new Error("options must be an object.");
+    throw new SdkProtocolError("INVALID_OPTIONS", "options must be a JSON object.");
   }
   if (
     isRecord(config.options) &&
     Object.hasOwn(config.options, "seed") &&
     (typeof config.options.seed !== "number" || !Number.isFinite(config.options.seed))
   ) {
-    throw new Error("options.seed must be a finite number.");
+    throw new SdkProtocolError("INVALID_OPTIONS", "options.seed must be a finite number.");
   }
   if (hasOptions) {
-    validateJsonValue(config.options);
+    try {
+      validateJsonValue(config.options);
+    } catch {
+      throw new SdkProtocolError("INVALID_OPTIONS");
+    }
   }
   if (Object.hasOwn(config, "tickRateHz") && !isFiniteRate(config.tickRateHz)) {
     throw new Error("tickRateHz must be a finite number between 1 and 60.");
@@ -144,7 +159,100 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
   }
 }
 
+export function validatePlayerRoster(value: unknown): asserts value is string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
+    throw new SdkProtocolError("WRONG_ROSTER", "players must contain between 1 and 100 player IDs.");
+  }
+  const players = new Set<string>();
+  for (const playerId of value) {
+    if (typeof playerId !== "string" || playerId.trim().length === 0 || players.has(playerId)) {
+      throw new SdkProtocolError("WRONG_ROSTER", "players must contain unique, non-empty player IDs.");
+    }
+    players.add(playerId);
+  }
+}
+
+const tickInputFields = new Set([
+  "playerId",
+  "data",
+  "timestamp",
+  "actionId",
+  "actionSchemaId",
+]);
+
+export function normalizeTickContext(ctx: unknown): TickContext {
+  if (!isRecord(ctx)) {
+    throw new Error("TickContext must be an object.");
+  }
+  if (!Array.isArray(ctx.inputs)) {
+    throw new Error("inputs must be an array.");
+  }
+  const inputs = ctx.inputs.map(input => {
+    if (!isRecord(input)) {
+      throw new Error("Each input must be an object.");
+    }
+    const flattenedData = Object.fromEntries(
+      Object.entries(input).filter(([field]) => !tickInputFields.has(field)),
+    );
+    if (!Object.hasOwn(input, "data") && Object.keys(flattenedData).length === 0) {
+      throw new Error("input.data is required.");
+    }
+    const data = Object.hasOwn(input, "data")
+      ? isRecord(input.data) && Object.keys(flattenedData).length > 0
+        ? { ...flattenedData, ...input.data }
+        : input.data
+      : flattenedData;
+    const normalized = {
+      playerId: input.playerId,
+      data,
+      ...(Object.hasOwn(input, "timestamp") ? { timestamp: input.timestamp } : {}),
+      ...(Object.hasOwn(input, "actionId") ? { actionId: input.actionId } : {}),
+      ...(Object.hasOwn(input, "actionSchemaId") ? { actionSchemaId: input.actionSchemaId } : {}),
+    };
+    if (!isNonEmptyString(normalized.playerId)) {
+      throw new Error("input.playerId must be a non-empty string.");
+    }
+    validateJsonValue(normalized.data);
+    if (
+      Object.hasOwn(normalized, "timestamp") &&
+      (!isSafeInteger(normalized.timestamp) || normalized.timestamp < 0)
+    ) {
+      throw new Error("input.timestamp must be a non-negative safe integer.");
+    }
+    const hasActionId = Object.hasOwn(normalized, "actionId");
+    const hasActionSchemaId = Object.hasOwn(normalized, "actionSchemaId");
+    if (hasActionId !== hasActionSchemaId) {
+      throw new Error("input.actionId and input.actionSchemaId must be supplied together.");
+    }
+    if (
+      hasActionId &&
+      (!isValidProtocolKey(normalized.actionId) || !isValidActionSchemaId(normalized.actionSchemaId))
+    ) {
+      throw new Error("input action identifiers are invalid.");
+    }
+    return normalized;
+  });
+  const normalizedContext = {
+    tick: ctx.tick,
+    inputs,
+    ...(Object.hasOwn(ctx, "commands")
+      ? {
+          commands: Array.isArray(ctx.commands)
+            ? ctx.commands.map(normalizeGameCommand)
+            : ctx.commands,
+        }
+      : {}),
+    elapsedSeconds: ctx.elapsedSeconds,
+  };
+  validateTickContextShape(normalizedContext);
+  return normalizedContext;
+}
+
 export function validateTickContext(ctx: unknown): asserts ctx is TickContext {
+  normalizeTickContext(ctx);
+}
+
+function validateTickContextShape(ctx: unknown): asserts ctx is TickContext {
   if (!isRecord(ctx)) {
     throw new Error("TickContext must be an object.");
   }
@@ -155,31 +263,19 @@ export function validateTickContext(ctx: unknown): asserts ctx is TickContext {
     throw new Error("inputs must be an array.");
   }
   for (const input of ctx.inputs) {
-    if (!isRecord(input)) {
-      throw new Error("Each input must be an object.");
-    }
-    if (!isNonEmptyString(input.playerId)) {
-      throw new Error("input.playerId must be a non-empty string.");
-    }
-    if (!Object.hasOwn(input, "data")) {
-      throw new Error("input.data is required.");
+    if (!isRecord(input) || !isNonEmptyString(input.playerId) || !Object.hasOwn(input, "data")) {
+      throw new Error("Each input requires a non-empty playerId and data.");
     }
     validateJsonValue(input.data);
-    if (
-      Object.hasOwn(input, "timestamp") &&
-      (!isSafeInteger(input.timestamp) || input.timestamp < 0)
-    ) {
+    if (Object.hasOwn(input, "timestamp")
+      && (!isSafeInteger(input.timestamp) || input.timestamp < 0)) {
       throw new Error("input.timestamp must be a non-negative safe integer.");
     }
-    const hasActionId = Object.hasOwn(input, "actionId");
-    const hasActionSchemaId = Object.hasOwn(input, "actionSchemaId");
-    if (hasActionId !== hasActionSchemaId) {
+    if (Object.hasOwn(input, "actionId") !== Object.hasOwn(input, "actionSchemaId")) {
       throw new Error("input.actionId and input.actionSchemaId must be supplied together.");
     }
-    if (
-      hasActionId &&
-      (!isValidProtocolKey(input.actionId) || !isValidActionSchemaId(input.actionSchemaId))
-    ) {
+    if (Object.hasOwn(input, "actionId")
+      && (!isValidProtocolKey(input.actionId) || !isValidActionSchemaId(input.actionSchemaId))) {
       throw new Error("input action identifiers are invalid.");
     }
   }
@@ -200,14 +296,38 @@ export function validateGameCommand(command: unknown): asserts command is GameCo
   if (!isRecord(command) || !isNonEmptyString(command.type)) {
     throw new Error("command.type must be a non-empty string.");
   }
-  if (!Object.hasOwn(command, "data")) {
-    throw new Error("command.data is required.");
+  const allowedFields = new Set(["type", "data", "payload", "issuer", "timestamp"]);
+  if (Object.keys(command).some(field => !allowedFields.has(field))) {
+    throw new Error("command contains an unsupported field.");
   }
-  validateJsonValue(command.data);
+  if (Object.hasOwn(command, "data") && Object.hasOwn(command, "payload")) {
+    throw new Error("command.data and command.payload must not both be supplied.");
+  }
+  if (Object.hasOwn(command, "data")) validateJsonValue(command.data);
+  if (Object.hasOwn(command, "payload")) validateJsonValue(command.payload);
+  if (Object.hasOwn(command, "issuer") && typeof command.issuer !== "string") {
+    throw new Error("command.issuer must be a string when provided.");
+  }
   if (
     Object.hasOwn(command, "timestamp") &&
     (!isSafeInteger(command.timestamp) || command.timestamp < 0)
   ) {
     throw new Error("command.timestamp must be a non-negative safe integer.");
   }
+}
+
+export function normalizeGameCommand(value: unknown): GameCommand {
+  validateGameCommand(value);
+  if (!isRecord(value)) throw new Error("command must be an object.");
+  const { payload, ...command } = value;
+  return {
+    type: command.type as string,
+    ...(Object.hasOwn(command, "data")
+      ? { data: command.data }
+      : Object.hasOwn(value, "payload")
+        ? { data: payload }
+        : {}),
+    ...(Object.hasOwn(command, "issuer") ? { issuer: command.issuer as string } : {}),
+    ...(Object.hasOwn(command, "timestamp") ? { timestamp: command.timestamp as number } : {}),
+  };
 }

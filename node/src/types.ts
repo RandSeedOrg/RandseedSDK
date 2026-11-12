@@ -21,6 +21,7 @@ export interface GameManifest {
   tickRateHz: number;
   persistentTable: boolean;
   optionsSchema?: Record<string, unknown> | boolean;
+  playerViewMode?: "private";
   resultDefinition?: GameResultDefinition;
 }
 
@@ -118,7 +119,7 @@ export interface GameActionResult {
 
 export interface GameCommand<TData = unknown> {
   type: string;
-  data: TData;
+  data?: TData;
   issuer?: string;
   timestamp?: number;
 }

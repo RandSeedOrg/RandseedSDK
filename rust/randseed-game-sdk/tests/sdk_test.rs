@@ -10,7 +10,7 @@ use randseed_game_sdk::{
     GameActionResult, GameCommand, GameManifest, GameResult, GameResultDefinition, GameResultEvent,
     GameServer, HealthResponse, InitResult, MatchConfig, MatchOptions, MatchSummary, Mulberry32,
     NextMatchPolicy, PlatformClient, PlayerEventResult, ReplayDataV2, ReplayInputItem,
-    ReplayStorageTier, SdkError, TickContext, TickInput, TickResult,
+    ReplayStorageTier, SdkError, SdkErrorCode, TickContext, TickInput, TickResult,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -18,6 +18,22 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+#[test]
+fn sdk_error_codes_match_the_shared_fixture() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/sdk-error-codes-v1.json")).unwrap();
+    assert_eq!(fixture["protocolVersion"], 1);
+    for entry in fixture["errors"].as_array().unwrap() {
+        let code: SdkErrorCode = serde_json::from_value(entry["code"].clone()).unwrap();
+        assert_eq!(code.as_str(), entry["code"].as_str().unwrap());
+        assert_eq!(code.retryable(), entry["retryable"].as_bool().unwrap());
+        assert_eq!(
+            code.creator_action(),
+            entry["creatorAction"].as_str().unwrap()
+        );
+    }
+}
 
 fn assert_json_roundtrip<T>(input: &serde_json::Value, expected: serde_json::Value)
 where
@@ -298,6 +314,7 @@ impl GameServer for MockGame {
             tick_rate_hz: 20.0,
             persistent_table: true,
             options_schema: Some(json!({ "seed": { "type": "number" } })),
+            player_view_mode: None,
             result_definition: None,
         })
     }
@@ -735,7 +752,12 @@ async fn agent_capability_endpoint_requires_a_valid_explicit_declaration() {
     assert_eq!(status, 500);
     assert_eq!(
         body,
-        json!({"error": "Agent capabilities are unavailable."})
+        json!({
+            "code": "INVALID_RESULT",
+            "retryable": false,
+            "creatorAction": "Correct the game callback result to satisfy its documented schema.",
+            "error": "Correct the Agent capabilities declaration and restart the game server."
+        })
     );
 }
 
@@ -769,7 +791,9 @@ async fn test_wire_protocol_endpoints_real_tcp() {
         assert_eq!(response.status(), expected_status);
         if expected_status == 500 {
             let body: serde_json::Value = response.json().await.unwrap();
-            assert_eq!(body["error"], "Internal server error.");
+            assert_eq!(body["code"], "INVALID_GAME_OVER_POLICY");
+            assert_eq!(body["retryable"], false);
+            assert!(body["creatorAction"].as_str().is_some());
         }
     }
 
@@ -941,7 +965,8 @@ async fn test_wire_protocol_endpoints_real_tcp() {
         .unwrap();
     assert_eq!(resp.status(), 500);
     let error_body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(error_body, json!({ "error": "Internal server error." }));
+    assert_eq!(error_body["code"], "CALLBACK_FAILED");
+    assert_eq!(error_body["retryable"], false);
 
     let panic_req = json!({
         "command": { "type": "panic", "data": {} },
@@ -955,7 +980,8 @@ async fn test_wire_protocol_endpoints_real_tcp() {
         .unwrap();
     assert_eq!(resp.status(), 500);
     let panic_error: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(panic_error, json!({ "error": "Internal server error." }));
+    assert_eq!(panic_error["code"], "CALLBACK_FAILED");
+    assert_eq!(panic_error["retryable"], false);
 
     let resp = client
         .get(format!("{}/health", base_url))
@@ -993,7 +1019,12 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     let validation_error: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
         validation_error,
-        json!({ "error": "matchId must be a non-empty string." })
+        json!({
+            "code": "INVALID_REQUEST",
+            "retryable": false,
+            "creatorAction": "Correct the request JSON and required fields before retrying.",
+            "error": "matchId must be a non-empty string."
+        })
     );
 
     let negative_match_seq = json!({
@@ -1012,7 +1043,12 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 400);
     assert_eq!(
         resp.json::<serde_json::Value>().await.unwrap(),
-        json!({ "error": "Invalid JSON request body." })
+        json!({
+            "code": "INVALID_REQUEST",
+            "retryable": false,
+            "creatorAction": "Correct the request JSON and required fields before retrying.",
+            "error": "Correct the request JSON and required fields before retrying."
+        })
     );
 
     let negative_tick = json!({
@@ -1028,7 +1064,12 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 400);
     assert_eq!(
         resp.json::<serde_json::Value>().await.unwrap(),
-        json!({ "error": "Invalid JSON request body." })
+        json!({
+            "code": "INVALID_ACTION",
+            "retryable": false,
+            "creatorAction": "Correct the action payload and action identifiers to match the declared action schema.",
+            "error": "Correct the action payload and action identifiers to match the declared action schema."
+        })
     );
 
     let negative_timestamp = json!({
@@ -1048,7 +1089,12 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 400);
     assert_eq!(
         resp.json::<serde_json::Value>().await.unwrap(),
-        json!({ "error": "Invalid JSON request body." })
+        json!({
+            "code": "INVALID_ACTION",
+            "retryable": false,
+            "creatorAction": "Correct the action payload and action identifiers to match the declared action schema.",
+            "error": "Correct the action payload and action identifiers to match the declared action schema."
+        })
     );
 
     let unsafe_timestamp = json!({
@@ -1072,7 +1118,12 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 400);
     assert_eq!(
         resp.json::<serde_json::Value>().await.unwrap(),
-        json!({ "error": "input.timestamp must be a non-negative safe integer." })
+        json!({
+            "code": "INVALID_ACTION",
+            "retryable": false,
+            "creatorAction": "Correct the action payload and action identifiers to match the declared action schema.",
+            "error": "input.timestamp must be a non-negative safe integer."
+        })
     );
 
     let oversized_init = json!({
@@ -1094,7 +1145,12 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(resp.status(), 413);
     assert_eq!(
         resp.json::<serde_json::Value>().await.unwrap(),
-        json!({ "error": "Request body must not exceed 1 MiB." })
+        json!({
+            "code": "RESOURCE_LIMIT_EXCEEDED",
+            "retryable": false,
+            "creatorAction": "Reduce request, stream frame, state, result, or view size below the documented limit.",
+            "error": "Request body must not exceed 1 MiB."
+        })
     );
 }
 
@@ -1457,6 +1513,10 @@ fn tick_input_deserializes_action_fields_without_polluting_data_and_rejects_null
         Some("counter.move.v1")
     );
     assert_eq!(flattened.data, json!({ "dx": 1, "dy": -1 }));
+    assert!(
+        serde_json::from_value::<TickInput>(json!({ "playerId": "p3" })).is_err(),
+        "input without data or flattened game fields must fail deserialization"
+    );
 
     let null_action_id = serde_json::from_value::<TickInput>(json!({
         "playerId": "p1",

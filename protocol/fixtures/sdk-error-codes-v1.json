@@ -1,0 +1,85 @@
+{
+  "protocolVersion": 1,
+  "errors": [
+    {
+      "code": "INVALID_REQUEST",
+      "retryable": false,
+      "creatorAction": "Correct the request JSON and required fields before retrying."
+    },
+    {
+      "code": "INVALID_STREAM_MESSAGE",
+      "retryable": false,
+      "creatorAction": "Correct the Session Stream message shape and field types."
+    },
+    {
+      "code": "INVALID_MANIFEST",
+      "retryable": false,
+      "creatorAction": "Correct the game manifest fields and restart the game server."
+    },
+    {
+      "code": "INVALID_OPTIONS",
+      "retryable": false,
+      "creatorAction": "Correct match options to match the declared options schema."
+    },
+    {
+      "code": "INVALID_STATE",
+      "retryable": false,
+      "creatorAction": "Correct the game state shape and version before replaying or resuming."
+    },
+    {
+      "code": "WRONG_ROSTER",
+      "retryable": false,
+      "creatorAction": "Use only active roster player IDs and provide exactly one view per active seat."
+    },
+    {
+      "code": "INVALID_ACTION",
+      "retryable": false,
+      "creatorAction": "Correct the action payload and action identifiers to match the declared action schema."
+    },
+    {
+      "code": "TICK_SEQUENCE_MISMATCH",
+      "retryable": false,
+      "creatorAction": "Send the next contiguous tick after the session's current tick."
+    },
+    {
+      "code": "REPLAY_MISMATCH",
+      "retryable": false,
+      "creatorAction": "Restore a checkpoint and replay each committed tick exactly once in order."
+    },
+    {
+      "code": "CALLBACK_FAILED",
+      "retryable": false,
+      "creatorAction": "Fix the game callback and redeploy; callback internals are intentionally not exposed."
+    },
+    {
+      "code": "INVALID_RESULT",
+      "retryable": false,
+      "creatorAction": "Correct the game callback result to satisfy its documented schema."
+    },
+    {
+      "code": "INVALID_GAME_OVER_POLICY",
+      "retryable": false,
+      "creatorAction": "Return a terminal result with a supported next-match policy and non-negative integer timeout."
+    },
+    {
+      "code": "RESOURCE_LIMIT_EXCEEDED",
+      "retryable": false,
+      "creatorAction": "Reduce request, stream frame, state, result, or view size below the documented limit."
+    },
+    {
+      "code": "UNSUPPORTED_FEATURE",
+      "retryable": false,
+      "creatorAction": "Remove the unsupported feature or implement its required callback."
+    },
+    {
+      "code": "NOT_FOUND",
+      "retryable": false,
+      "creatorAction": "Correct the endpoint or resource identifier."
+    },
+    {
+      "code": "INTERNAL_ERROR",
+      "retryable": true,
+      "creatorAction": "Retry only after resolving a transient server or runtime failure."
+    }
+  ]
+}
