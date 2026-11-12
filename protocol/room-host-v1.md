@@ -93,7 +93,9 @@ Player-event requests may include `players` for the resulting roster (after a
 join or leave). Whenever `playerViews` is returned, the request must provide
 that resulting roster so the SDK can verify an exact key match. Private mode
 rejects missing views; an absent or extra key is an error, never a fallback to
-canonical `state`. Each view is capped at 64 KiB and the map at 1 MiB.
+canonical `state`. Each view is capped at 64 KiB and the complete UTF-8 JSON
+serialization of the map (including player ID keys and JSON syntax overhead)
+at 1 MiB.
 
 ### Match configuration
 

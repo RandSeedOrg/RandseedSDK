@@ -47,15 +47,13 @@ function validatePlayerViews(
     throw new SdkProtocolError("INVALID_RESULT", "playerViews must contain exactly one entry per active roster seat.");
   }
 
-  let totalBytes = 0;
   for (const [playerId, view] of Object.entries(value)) {
     if (!playerId.trim()) throw new SdkProtocolError("INVALID_RESULT", "playerViews keys must be non-empty player IDs.");
     validateJson(view, "INVALID_RESULT");
     const bytes = new TextEncoder().encode(JSON.stringify(view)).byteLength;
     if (bytes > MAX_PLAYER_VIEW_BYTES) throw new SdkProtocolError("RESOURCE_LIMIT_EXCEEDED");
-    totalBytes += bytes;
   }
-  if (totalBytes > MAX_PLAYER_VIEWS_BYTES) {
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_PLAYER_VIEWS_BYTES) {
     throw new SdkProtocolError("RESOURCE_LIMIT_EXCEEDED");
   }
 }

@@ -753,7 +753,6 @@ pub fn validate_player_views(
         ));
     }
 
-    let mut total_bytes = 0usize;
     for view in views.values() {
         let size = serde_json::to_vec(view)
             .map_err(|_| SdkError::protocol(SdkErrorCode::InvalidResult))?
@@ -761,8 +760,10 @@ pub fn validate_player_views(
         if size > MAX_PLAYER_VIEW_BYTES {
             return Err(SdkError::protocol(SdkErrorCode::ResourceLimitExceeded));
         }
-        total_bytes = total_bytes.saturating_add(size);
     }
+    let total_bytes = serde_json::to_vec(views)
+        .map_err(|_| SdkError::protocol(SdkErrorCode::InvalidResult))?
+        .len();
     if total_bytes > MAX_PLAYER_VIEWS_BYTES {
         return Err(SdkError::protocol(SdkErrorCode::ResourceLimitExceeded));
     }

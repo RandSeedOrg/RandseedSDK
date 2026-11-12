@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { createGameServer, STREAM_PROTOCOL_V1 } from "../dist/index.js";
+import { createGameServer, SdkProtocolError, STREAM_PROTOCOL_V1 } from "../dist/index.js";
+import { validateGameStateResult } from "../dist/contract-validation.js";
 
 const protocolFixture = JSON.parse(
   await readFile(new URL("../../protocol/fixtures/session-stream-v1.json", import.meta.url), "utf8"),
@@ -88,17 +89,22 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
         playerViewMode: "private",
       }),
       init: () => ({ state: {} }),
-      tick: (ctx, state) => ({
-        state: { ...state, tick: ctx.tick },
-        persist: false,
-        playerViews: {
-          p1: { ownSecret: "P1_CANARY", tick: ctx.tick },
-          p2: { ownSecret: "P2_CANARY", tick: ctx.tick },
-        },
-        actionResults: ctx.inputs
-          .filter(input => input.actionId)
-          .map(input => ({ actionId: input.actionId, status: "applied" })),
-      }),
+      tick: (ctx, state) => {
+        if (ctx.inputs.some(input => input.data?.throwProtocol)) {
+          throw new SdkProtocolError("INVALID_STATE");
+        }
+        return {
+          state: { ...state, tick: ctx.tick },
+          persist: false,
+          playerViews: {
+            p1: { ownSecret: "P1_CANARY", tick: ctx.tick },
+            p2: { ownSecret: "P2_CANARY", tick: ctx.tick },
+          },
+          actionResults: ctx.inputs
+            .filter(input => input.actionId)
+            .map(input => ({ actionId: input.actionId, status: "applied" })),
+        };
+      },
       onPlayerJoin: (_playerId, state) => ({ state }),
       onPlayerLeave: (_playerId, state) => ({ state }),
       isGameOver: () => ({ over: false }),
@@ -179,6 +185,13 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
     assert.deepEqual(stepped.actionResults, [{ actionId: "act-1", status: "applied" }]);
     assert.equal(JSON.stringify(stepped.playerViews.p1).includes("P2_CANARY"), false);
 
+    const callbackProtocolError = await send({
+      type: "step",
+      tick: 2,
+      inputs: [{ playerId: "p1", data: { throwProtocol: true } }],
+    });
+    assert.equal(callbackProtocolError.code, "INVALID_STATE");
+
     const incompleteViews = await send({
       type: "hydrate",
       matchId: "private-2",
@@ -208,6 +221,17 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
       notify = null;
       fn();
     }
+  });
+
+  test("serialized private view-map limit includes player ID keys and JSON overhead", () => {
+    const playerId = "p".repeat(1024 * 1024);
+    assert.throws(
+      () => validateGameStateResult(
+        { state: {}, playerViews: { [playerId]: { ownSecret: "private" } } },
+        [playerId],
+      ),
+      error => error instanceof SdkProtocolError && error.code === "RESOURCE_LIMIT_EXCEEDED",
+    );
   });
   await new Promise((resolve, reject) => {
     ws.addEventListener("open", resolve, { once: true });

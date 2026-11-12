@@ -208,7 +208,8 @@ function parseReplayStep(value: unknown): ParsedReplayStep {
 async function invokeGame<T>(name: string, callback: () => T | Promise<T>): Promise<T> {
   try {
     return await callback();
-  } catch {
+  } catch (error) {
+    if (error instanceof SdkProtocolError) throw error;
     console.error(`[server-sdk] Stream game callback failed: ${name}.`);
     throw new SdkProtocolError("CALLBACK_FAILED");
   }

@@ -5,12 +5,13 @@
 use async_trait::async_trait;
 use randseed_game_sdk::{
     create_game_router, evaluate_replay_storage_tier, validate_game_result_units,
-    validate_replay_data_v2, AgentControlMode, AgentGameCapabilities, AgentPlayerContract,
-    AgentPlayerViewProjection, AgentPlayerViewRequest, CommandResult, GameActionOutcome,
-    GameActionResult, GameCommand, GameManifest, GameResult, GameResultDefinition, GameResultEvent,
-    GameServer, HealthResponse, InitResult, MatchConfig, MatchOptions, MatchSummary, Mulberry32,
-    NextMatchPolicy, PlatformClient, PlayerEventResult, ReplayDataV2, ReplayInputItem,
-    ReplayStorageTier, SdkError, SdkErrorCode, TickContext, TickInput, TickResult,
+    validate_player_views, validate_replay_data_v2, AgentControlMode, AgentGameCapabilities,
+    AgentPlayerContract, AgentPlayerViewProjection, AgentPlayerViewRequest, CommandResult,
+    GameActionOutcome, GameActionResult, GameCommand, GameManifest, GameResult,
+    GameResultDefinition, GameResultEvent, GameServer, HealthResponse, InitResult, MatchConfig,
+    MatchOptions, MatchSummary, Mulberry32, NextMatchPolicy, PlatformClient, PlayerEventResult,
+    ReplayDataV2, ReplayInputItem, ReplayStorageTier, SdkError, SdkErrorCode, TickContext,
+    TickInput, TickResult,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -33,6 +34,15 @@ fn sdk_error_codes_match_the_shared_fixture() {
             entry["creatorAction"].as_str().unwrap()
         );
     }
+}
+
+#[test]
+fn private_view_map_size_includes_player_ids_and_json_overhead() {
+    let player_id = "p".repeat(1024 * 1024);
+    let players = vec![player_id.clone()];
+    let views = HashMap::from([(player_id, json!({ "ownSecret": "private" }))]);
+    let error = validate_player_views(Some(&views), Some(&players), false).unwrap_err();
+    assert_eq!(error.code(), SdkErrorCode::ResourceLimitExceeded);
 }
 
 fn assert_json_roundtrip<T>(input: &serde_json::Value, expected: serde_json::Value)

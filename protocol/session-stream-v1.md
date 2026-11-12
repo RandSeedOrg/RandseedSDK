@@ -40,8 +40,10 @@ The host starts or recovers one in-memory match with:
 `matchId`, `tickRateHz`, `tick`, `state`, and the active `players` roster are
 required. The roster must be unique and non-empty. A private-view manifest
 requires exactly one checkpoint view for every active seat when replay is
-empty. Each view is at most 64 KiB; the view map is at most 1 MiB. Never put
-another player's private fields in a recipient's view.
+empty. Each view is at most 64 KiB; the view map is at most 1 MiB. Limits use
+UTF-8 serialized JSON bytes for the complete map, including player ID keys and
+JSON syntax overhead. Never put another player's private fields in a
+recipient's view.
 
 Replay entries are applied in ascending, contiguous tick order, starting at
 `tick + 1`. A replay after the checkpoint has already reached game over, a
