@@ -31,13 +31,37 @@ own GitHub App to notify Gamecreator. Gamecreator fetches the guide data and
 opens a pull request only when the displayed data changes. No PAT is stored in
 this repository.
 
+## Server SDK capabilities
+
+- **Authoritative multiplayer lifecycle** across Node.js/TypeScript, Go, Rust,
+  C#, and C++.
+- **Stateful low-latency sessions** with checkpoint hydration and deterministic
+  replay in the Node.js and Rust SDKs.
+- **Per-seat private views and action receipts** in Node.js and Rust, with
+  fail-closed roster coverage and no fallback to canonical state.
+- **Versioned Result Units and metrics** for round, stage, and match outcomes.
+- **Optional Agent contracts** for capability discovery and recipient-specific
+  player views in Node.js and Rust.
+- **Host-mediated room services** in Node.js and Rust through `PlatformClient`:
+  SQL, key-value storage, broadcasts, direct messages, and online player data.
+
 ## Room-host protocol
 
-All server SDKs implement the same HTTP/JSON lifecycle contract:
+All server SDKs implement the shared HTTP/JSON room lifecycle:
 
-- `GET /manifest` and `GET /health`
-- `POST /init`, `/tick`, `/onPlayerJoin`, `/onPlayerLeave`, `/isGameOver`
-- `POST /onCommand` for trusted host commands
+| Interface | Capability |
+| --- | --- |
+| `GET /manifest` | Game metadata, options schema, supported features, and Result Unit definitions. |
+| `GET /health` | Server health and runtime identity. |
+| `POST /init` | Initialize a match from host-authenticated players and options. |
+| `POST /tick` | Apply one authoritative tick of player inputs and trusted commands. |
+| `POST /onPlayerJoin` / `POST /onPlayerLeave` | Update game state for joins, reconnects, and departures. |
+| `POST /isGameOver` | Evaluate terminal state, summary, and next-match policy. |
+| `POST /onCommand` | Apply a trusted room-host command. |
+| `WebSocket /stream` (Node.js, Rust) | Stateful `hydrate` and `step` lifecycle with recovery, replay, private views, and action results. |
+| `GET /agent/capabilities` (optional, Node.js/Rust) | Declare supported Agent protocols and modes. |
+| `GET /agent/player-contract` (optional, Node.js/Rust) | Declare per-seat Agent view and action schemas. |
+| `POST /agent/player-view` (optional, Node.js/Rust) | Produce a recipient-specific view for the trusted host. |
 
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same
