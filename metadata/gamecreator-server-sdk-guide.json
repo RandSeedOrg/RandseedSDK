@@ -1,13 +1,70 @@
 {
   "repositoryUrl": "https://github.com/RandSeedOrg/RandseedSDK",
-  "badge": "Node.js: GitHub | Other languages: GitHub",
-  "summary": "The Node.js server SDK and the Go, Rust, C#, and C++ SDK sources are maintained in the public RandseedSDK repository. The browser-only @randseed/game-sdk is a separate npm package.",
+  "badge": "5 backend languages",
+  "summary": "Authoritative game-server SDKs for multiplayer rooms, available in Node.js/TypeScript, Go, Rust, C#, and C++. They share the Room Host Protocol v1. The browser-only @randseed/game-sdk is a separate client package.",
   "node": {
     "heading": "Node.js SDK (GitHub)",
     "installCommand": "npm install github:RandSeedOrg/RandseedSDK#main",
     "installGuidance": "Pin a reviewed tag or commit instead of main for reproducible builds.",
     "requirements": "Target fixed runtime nodejs-22 or nodejs-24 in randseed.fullstack.json and bundle the room server into a single ESM entrypoint for code.tar.gz."
   },
+  "capabilitiesHeading": "What the server SDKs provide",
+  "capabilities": [
+    {
+      "name": "Authoritative multiplayer",
+      "description": "A shared match lifecycle for initialization, ticks, player joins and leaves, trusted room commands, and terminal results."
+    },
+    {
+      "name": "Session recovery",
+      "description": "Node.js and Rust support Session Stream v1 with checkpoint hydration, contiguous ticks, deterministic replay, and action results."
+    },
+    {
+      "name": "Private player views",
+      "description": "Node.js and Rust validate recipient-specific views against the active roster and fail closed instead of exposing canonical state."
+    },
+    {
+      "name": "Match results",
+      "description": "Versioned Result Units represent round, stage, team, participant, and match outcomes with declared metrics."
+    },
+    {
+      "name": "Agent integration",
+      "description": "Optional Node.js and Rust interfaces expose Agent capabilities and trusted, recipient-specific player views."
+    },
+    {
+      "name": "Room services",
+      "description": "Node.js and Rust PlatformClient APIs provide host-mediated SQL, key-value storage, broadcasts, direct messages, and online player profiles."
+    }
+  ],
+  "interfacesHeading": "Server interface overview",
+  "interfaces": [
+    {
+      "group": "Room lifecycle",
+      "routes": [
+        { "name": "GET /manifest", "description": "Game metadata, options schema, and supported result definitions." },
+        { "name": "GET /health", "description": "Container health and runtime identity." },
+        { "name": "POST /init", "description": "Initialize a match from host-provided players and options." },
+        { "name": "POST /tick", "description": "Apply one authoritative tick of player inputs and commands." },
+        { "name": "POST /onPlayerJoin", "description": "Handle a player joining or reconnecting." },
+        { "name": "POST /onPlayerLeave", "description": "Handle a player leaving the match." },
+        { "name": "POST /isGameOver", "description": "Return terminal status, match summary, and next-match policy." },
+        { "name": "POST /onCommand", "description": "Apply a trusted room-host command." }
+      ]
+    },
+    {
+      "group": "Stateful sessions (Node.js and Rust)",
+      "routes": [
+        { "name": "WebSocket /stream", "description": "Exchange hydrate and step messages for stateful simulation, recovery, replay, and action results." }
+      ]
+    },
+    {
+      "group": "Optional Agent interfaces (Node.js and Rust)",
+      "routes": [
+        { "name": "GET /agent/capabilities", "description": "Declare supported Agent protocols and control modes." },
+        { "name": "GET /agent/player-contract", "description": "Declare per-seat view and action schemas." },
+        { "name": "POST /agent/player-view", "description": "Project a recipient-only view for the trusted room host." }
+      ]
+    }
+  ],
   "otherLanguagesHeading": "Other backend SDKs",
   "languages": [
     {
