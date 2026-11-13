@@ -238,6 +238,7 @@ export interface PlatformPlayersResponse {
     joinedAt: number;
     displayName?: string | null;
     avatarUrl?: string | null;
+    isGameCreator?: boolean;
   }>;
 }
 
