@@ -76,13 +76,28 @@ the recipient seat directly.
 }
 ```
 
-`title` and `version` are non-empty strings. `minPlayers` is at least one and
-`maxPlayers` is no smaller than `minPlayers`. The current room platform accepts
-at most 100 players and rates from 1 through 60 Hz, including fractional
-rates. `persistentTable` is a boolean. `optionsSchema` may optionally declare
+`title` and `version` are non-empty strings. `minPlayers` and `maxPlayers` are
+integers satisfying `1 <= minPlayers <= maxPlayers <= 100`; zero-player starts
+are unsupported. The current room platform accepts tick rates from 1 through
+60 Hz, including fractional rates.
+`persistentTable` is a boolean. `optionsSchema` may optionally declare
 a JSON Schema for game options. `resultDefinition` is optional and declares
 the result-unit types and metric aggregation contract described below. Keep its
 version stable only while its meaning is unchanged.
+
+On the RandSeed platform, `minPlayers` is the minimum number of assigned
+players required before a match may start (at least one; zero-player starts
+are unsupported). A match can begin at this threshold while some seats remain
+empty. `maxPlayers` is the maximum number of player seats, not a target the
+lobby must fill. For example, `minPlayers: 2` and `maxPlayers: 4` allows the
+platform to start with two assigned players and leaves capacity for up to two
+more. A solo game uses `minPlayers: 1`. If a game requires an exact roster, set
+both values to that roster size. After startup, additional seats can be
+admitted only while the game reports `joinable: true` and the roster remains
+below `maxPlayers`. The SDK validates `init` roster bounds; matchmaking and
+startup timing belong to the host/platform. `wait_for_ready` is a separate
+post-match policy and uses the completed match's full roster to decide when to
+start the next match.
 
 `playerViewMode` may be `"private"` when every active seat must receive a
 recipient-specific projection. In this mode, `POST /init` must return exactly

@@ -15,8 +15,8 @@ import (
 type GameManifest struct {
 	Title           string          `json:"title"`
 	Version         string          `json:"version"`
-	MinPlayers      int             `json:"minPlayers"`
-	MaxPlayers      int             `json:"maxPlayers"`
+	MinPlayers      int             `json:"minPlayers"` // Minimum assigned players to start (1 or more; zero-player starts are unsupported).
+	MaxPlayers      int             `json:"maxPlayers"` // Maximum seat capacity (at least MinPlayers); the room may start before it is full.
 	TickRateHz      float64         `json:"tickRateHz"`
 	PersistentTable bool            `json:"persistentTable"`
 	OptionsSchema   json.RawMessage `json:"optionsSchema,omitempty"`

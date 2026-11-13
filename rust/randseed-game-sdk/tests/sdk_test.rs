@@ -145,6 +145,17 @@ fn protocol_v1_validation_rejects_out_of_range_values() {
         serde_json::from_str(include_str!("fixtures/room-host-v1.json")).unwrap();
     let mut manifest: GameManifest = serde_json::from_value(fixture["manifest"].clone()).unwrap();
     assert!(manifest.validate().is_ok());
+    manifest.min_players = 0;
+    assert!(
+        manifest.validate().is_err(),
+        "zero-player starts are unsupported"
+    );
+    manifest.min_players = 2;
+    assert!(
+        manifest.validate().is_ok(),
+        "minimum may be below seat capacity"
+    );
+    manifest.min_players = 1;
     manifest.tick_rate_hz = 0.0;
     assert!(manifest.validate().is_err());
     manifest.tick_rate_hz = 60.0;

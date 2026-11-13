@@ -13,10 +13,12 @@ public sealed class GameManifest
     [JsonRequired]
     public string Version { get; init; } = string.Empty;
 
+    /// <summary>Minimum assigned players required to start a match; at least one (zero-player starts are unsupported).</summary>
     [JsonPropertyName("minPlayers")]
     [JsonRequired]
     public int MinPlayers { get; init; }
 
+    /// <summary>Maximum player-seat capacity, at least MinPlayers; the room may start before it is full.</summary>
     [JsonPropertyName("maxPlayers")]
     [JsonRequired]
     public int MaxPlayers { get; init; }

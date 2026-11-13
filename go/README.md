@@ -41,6 +41,18 @@ do not use wall-clock time, process-global match state, or unrecorded external
 inputs. Request bodies are limited to 1 MiB, and protocol sequence/tick
 numbers use safe-integer bounds.
 
+In `GameManifest`, configure integer limits satisfying
+`1 <= MinPlayers <= MaxPlayers <= 100`. `MinPlayers` is the minimum number of
+assigned players required before the RandSeed platform can start a match.
+Zero-player starts are unsupported; a solo game uses `MinPlayers: 1`.
+`MaxPlayers` must be at least `MinPlayers` and is the room's seat-capacity
+limit, not a lobby fill target. For
+example, `MinPlayers: 2, MaxPlayers: 4`
+may start with two assigned players and leave two seats open. Set both values
+to the same number when the game requires an exact roster size. After startup,
+additional seats are admitted only while the game reports `joinable: true` and
+the roster remains below `MaxPlayers`.
+
 ## Result Units
 
 Declare `GameResultDefinition` in `GameManifest`, then return `ResultUnits`

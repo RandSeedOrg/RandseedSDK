@@ -65,6 +65,17 @@ All server SDKs implement the shared HTTP/JSON room lifecycle:
 | `GET /agent/player-contract` (optional, Node.js/Rust) | Declare per-seat Agent view and action schemas. |
 | `POST /agent/player-view` (optional, Node.js/Rust) | Produce a recipient-specific view for the trusted host. |
 
+Configure integer limits satisfying `1 <= minPlayers <= maxPlayers <= 100`.
+`minPlayers` is the assigned-player threshold at which the RandSeed platform
+may start a match; `maxPlayers` is the room's seat capacity, not a required
+fill target. If the roster must be a fixed size, set both values to that size.
+A zero-player start is unsupported; a solo game uses `minPlayers: 1`.
+Additional players can join after startup only while the game reports
+`joinable: true` and seats remain below `maxPlayers`. The SDK validates the
+roster passed to `/init`; the platform owns matchmaking and startup timing.
+This start threshold is separate from `wait_for_ready`, which coordinates the
+existing roster between completed and next matches.
+
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same
 [wire fixture](./protocol/fixtures/room-host-v1.json), including deterministic

@@ -42,6 +42,15 @@ const game = {
 createGameServer(game, Number(process.env.PORT ?? 8080));
 ```
 
+For matchmaking, `minPlayers` is the minimum number of assigned players the
+RandSeed platform needs before starting a match. It must be at least `1`; a
+zero-player start is not supported. A single-player game uses
+`minPlayers: 1`. `maxPlayers` must be at least `minPlayers` and is the room's
+seat cap, not a required fill count. For example, `minPlayers: 2, maxPlayers: 4` may start with
+two assigned players and leave two seats open. To require an exact roster size,
+set both values to that size. More players can join after startup only while
+the game reports `joinable: true` and seats remain below `maxPlayers`.
+
 `createGameServer` starts the HTTP server and returns its Node.js
 `http.Server`. It exposes the lifecycle routes listed in the protocol, validates
 requests and game responses, limits request bodies to 1 MiB, and returns

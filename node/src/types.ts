@@ -16,7 +16,9 @@ export type JsonValue =
 export interface GameManifest {
   title: string;
   version: string;
+  /** Minimum assigned players required to start a match; at least 1 (a zero-player start is unsupported). */
   minPlayers: number;
+  /** Maximum player-seat capacity, at least minPlayers; the room may start before it is full. */
   maxPlayers: number;
   tickRateHz: number;
   persistentTable: boolean;
