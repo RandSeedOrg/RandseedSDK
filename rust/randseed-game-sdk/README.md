@@ -98,8 +98,11 @@ retries; corrections are append-only events.
 
 `PlatformClient::get_players()` includes optional `display_name` and
 `avatar_url` values for online room members when a public profile is available.
-The platform resolves these fields from each authenticated room session; they
-are display data, not authorization evidence.
+It may also include `is_game_creator`, indicating whether a player owns the
+game for the current room. Missing profile fields and unavailable ownership
+information remain absent. These are platform-supplied metadata fields, not
+authorization evidence; independently verify ownership and permissions before
+protected operations.
 
 Run the crate checks from this directory:
 

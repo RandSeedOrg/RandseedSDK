@@ -26,8 +26,13 @@ pub struct PlayerInfo {
     /// Platform-hosted avatar resource for the public profile, when available.
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "avatarUrl")]
     pub avatar_url: Option<String>,
-    /// True when this player owns the game whose room this roster belongs to.
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "isGameCreator")]
+    /// Whether this player owns the game for the current room, when known.
+    /// This is metadata, not authorization evidence.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "isGameCreator"
+    )]
     pub is_game_creator: Option<bool>,
 }
 

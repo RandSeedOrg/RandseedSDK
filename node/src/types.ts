@@ -238,6 +238,7 @@ export interface PlatformPlayersResponse {
     joinedAt: number;
     displayName?: string | null;
     avatarUrl?: string | null;
+    /** Whether this player owns the game for the current room; metadata only, not authorization evidence. */
     isGameCreator?: boolean;
   }>;
 }
