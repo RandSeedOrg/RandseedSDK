@@ -1338,7 +1338,8 @@ async fn test_platform_client_custom_mock() {
                                 "playerId": "p1",
                                 "joinedAt": 1000,
                                 "displayName": "Player One",
-                                "avatarUrl": "https://game.example/api/public/profile-avatar?name=Player%20One"
+                                "avatarUrl": "https://game.example/api/public/profile-avatar?name=Player%20One",
+                                "isGameCreator": true
                             },
                             { "playerId": "p2", "joinedAt": 2000 }
                         ]
@@ -1401,6 +1402,7 @@ async fn test_platform_client_custom_mock() {
         players[0].avatar_url.as_deref(),
         Some("https://game.example/api/public/profile-avatar?name=Player%20One")
     );
+    assert_eq!(players[0].is_game_creator, Some(true));
     assert_eq!(players[1].display_name, None);
     assert_eq!(players[1].avatar_url, None);
 

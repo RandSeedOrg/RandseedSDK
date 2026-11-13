@@ -567,7 +567,7 @@ describe("Node.js Server SDK", () => {
         status: 200,
         json: async () => ({
           players: [
-            { playerId: "p1", joinedAt: 1700000000000, displayName: "Player One", avatarUrl: "https://game.example/api/public/profile-avatar?name=Player%20One" },
+            { playerId: "p1", joinedAt: 1700000000000, displayName: "Player One", avatarUrl: "https://game.example/api/public/profile-avatar?name=Player%20One", isGameCreator: true },
             { playerId: "p2", joinedAt: 1700000001000 },
           ],
         }),
@@ -579,6 +579,7 @@ describe("Node.js Server SDK", () => {
       assert.equal(players[0].playerId, "p1");
       assert.equal(players[0].displayName, "Player One");
       assert.equal(players[0].avatarUrl, "https://game.example/api/public/profile-avatar?name=Player%20One");
+      assert.equal(players[0].isGameCreator, true);
       assert.equal(players[1].displayName, undefined);
     });
 

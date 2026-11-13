@@ -115,8 +115,12 @@ project's `package.json`, or use an `.mjs` entry point.
 
 - `PlatformClient` calls the documented room platform virtual hosts.
   `getPlayers()` returns online room members with optional public `displayName`
-  and platform-hosted `avatarUrl` fields. Missing profiles remain absent; game
-  servers must not use client-submitted names or avatars as authenticated data.
+  and platform-hosted `avatarUrl` fields, and may include `isGameCreator` to
+  indicate whether a player owns the game for the current room. Missing profile
+  fields and unavailable ownership information remain absent. These values are
+  platform-supplied metadata, not authorization evidence; validate ownership
+  and permissions independently before protected operations. Game servers must
+  not use client-submitted names or avatars as authenticated data.
 - `mulberry32` and `mulberry32U32` provide deterministic, non-cryptographic
   random number generation.
 - Replay helpers validate, execute, and prepare replay data for storage tiers.
