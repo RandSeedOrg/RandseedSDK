@@ -97,7 +97,9 @@ struct GameResultEvent {
 struct GameManifest {
     std::string title;
     std::string version;
+    // Minimum assigned players to start a match (at least one; zero-player starts are unsupported).
     std::uint32_t min_players{1};
+    // Maximum seat capacity, at least min_players; the room may start before it is full.
     std::uint32_t max_players{1};
     double tick_rate_hz{1.0};
     bool persistent_table{false};

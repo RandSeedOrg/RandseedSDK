@@ -135,6 +135,13 @@ describe("Node.js Server SDK", () => {
       assert.equal(data.tickRateHz, 20);
     });
 
+    test("manifest rejects zero-player starts and permits a lower start threshold than capacity", () => {
+      const manifest = { ...mockGame.manifest(), minPlayers: 2, maxPlayers: 4 };
+      assert.doesNotThrow(() => validateGameManifest(manifest));
+      assert.throws(() => validateGameManifest({ ...manifest, minPlayers: 0 }));
+      assert.throws(() => validateGameManifest({ ...manifest, maxPlayers: 1 }));
+    });
+
     test("GET /health returns a healthy status", async () => {
       const res = await fetch(`${baseUrl}/health`);
       assert.equal(res.status, 200);

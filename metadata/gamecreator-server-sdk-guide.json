@@ -15,6 +15,10 @@
       "description": "A shared match lifecycle for initialization, ticks, player joins and leaves, trusted room commands, and terminal results."
     },
     {
+      "name": "Room player limits",
+      "description": "Configure integers with 1 <= minPlayers <= maxPlayers <= 100. minPlayers is the assigned-player start threshold (solo games use 1; zero-player starts are unsupported); maxPlayers is seat capacity, not a fill target. Set both equal for a fixed-size roster."
+    },
+    {
       "name": "Session recovery",
       "description": "Node.js and Rust support Session Stream v1 with checkpoint hydration, contiguous ticks, deterministic replay, and action results."
     },

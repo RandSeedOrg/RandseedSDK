@@ -135,6 +135,16 @@ randseed::InitResult result{
     .result_units = std::vector<randseed::GameResultEvent>{event}};
 ```
 
+In `GameManifest`, configure integer limits satisfying
+`1 <= min_players <= max_players <= 100`. `min_players` is the minimum number
+of assigned players required before the RandSeed platform can start a match.
+It must be at least `1`; zero-player starts are unsupported. `max_players` is
+the room's seat-capacity limit, not a lobby fill target. For example,
+`min_players: 2, max_players: 4` may start with two assigned players and leave
+two seats open. Set both values to the same number when the game needs an exact
+roster size. After startup, additional seats are admitted only while the game
+reports `joinable = true` and the roster remains below `max_players`.
+
 `randseed::Mulberry32` accepts a numeric seed, applies JavaScript-compatible
 `ToInt32` conversion, and exposes `next_u32()` and `next_float()`. It is a
 deterministic simulation PRNG, not a cryptographic generator or GameVRF.

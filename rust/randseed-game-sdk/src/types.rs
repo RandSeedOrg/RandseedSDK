@@ -630,10 +630,10 @@ pub struct GameManifest {
     pub title: String,
     /// Semantic version.
     pub version: String,
-    /// Minimum number of players in a room; must be at least one.
+    /// Minimum assigned players required to start a match; at least one (zero-player starts are unsupported).
     #[serde(rename = "minPlayers")]
     pub min_players: u32,
-    /// Maximum number of players in a room; must not be less than `min_players`.
+    /// Maximum player-seat capacity, at least `min_players`; the room may start before it is full.
     #[serde(rename = "maxPlayers")]
     pub max_players: u32,
     /// Simulation tick frequency in hertz, from 1 through 60.

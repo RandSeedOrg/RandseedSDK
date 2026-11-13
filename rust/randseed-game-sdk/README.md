@@ -10,6 +10,18 @@ Implement authoritative game logic as calculations from the supplied state
 and tick context; avoid process-global match state, wall-clock time, operating
 system randomness, and unrecorded network responses.
 
+In `GameManifest`, configure integer limits satisfying
+`1 <= minPlayers <= maxPlayers <= 100`. `minPlayers` is the minimum number of
+assigned players required before the RandSeed platform can start a match.
+Zero-player starts are unsupported; a solo game uses `minPlayers: 1`.
+`maxPlayers` must be at least `minPlayers` and is the room's seat-capacity
+limit, not a lobby fill target. For
+example, `minPlayers: 2, maxPlayers: 4`
+may start with two assigned players and leave two seats open. Set both values
+to the same number when the game requires an exact roster size. After startup,
+additional seats are admitted only while the game reports `joinable: true` and
+the roster is below `maxPlayers`.
+
 ## Requirements
 
 - Rust 2021 edition
