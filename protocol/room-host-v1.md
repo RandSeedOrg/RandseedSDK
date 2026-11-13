@@ -94,8 +94,10 @@ platform to start with two assigned players and leaves capacity for up to two
 more. A solo game uses `minPlayers: 1`. If a game requires an exact roster, set
 both values to that roster size. After startup, additional seats can be
 admitted only while the game reports `joinable: true` and the roster remains
-below `maxPlayers`. The SDK validates `init` roster bounds; matchmaking and
-startup timing belong to the host/platform. `wait_for_ready` is a separate
+below `maxPlayers`. Node.js, Rust, and .NET SDKs enforce manifest roster bounds
+at `/init`; Go and C++ currently validate only generic roster constraints.
+Gamecreator also enforces manifest bounds platform-side. Matchmaking and startup
+timing belong to the host/platform. `wait_for_ready` is a separate
 post-match policy and uses the completed match's full roster to decide when to
 start the next match.
 

@@ -71,9 +71,11 @@ may start a match; `maxPlayers` is the room's seat capacity, not a required
 fill target. If the roster must be a fixed size, set both values to that size.
 A zero-player start is unsupported; a solo game uses `minPlayers: 1`.
 Additional players can join after startup only while the game reports
-`joinable: true` and seats remain below `maxPlayers`. The SDK validates the
-roster passed to `/init`; the platform owns matchmaking and startup timing.
-This start threshold is separate from `wait_for_ready`, which coordinates the
+`joinable: true` and seats remain below `maxPlayers`. Node.js, Rust, and .NET
+SDKs enforce manifest roster bounds at `/init`; Go and C++ currently validate
+only generic roster constraints. Gamecreator also enforces manifest bounds
+platform-side; the platform owns matchmaking and startup timing. This start
+threshold is separate from `wait_for_ready`, which coordinates the
 existing roster between completed and next matches.
 
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
