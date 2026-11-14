@@ -49,7 +49,7 @@ Create a mapping table before editing:
 | Browser state reducer / turn handler | `tick(ctx, state)`; consume only the host-sealed inputs for this tick |
 | UI button or key binding | `TickInput.data`; validate its schema and return `actionResults` for supplied action IDs |
 | Player joins or reconnects | `onPlayerJoin(playerId, state)`; treat an already-present ID as reconnect, not a second seat |
-| Player disconnects or leaves | `onPlayerLeave(playerId, state)`; apply the game's offline rules and retain or remove the seat and private data as appropriate |
+| Player disconnects or leaves | `onPlayerLeave(playerId, state)`; apply the game's offline rules and retain or remove the player's logical seat and private data in game state as appropriate |
 | End-screen condition | `isGameOver(state)`; return a valid summary and `nextMatchPolicy` |
 | Browser-specific hidden fields | Keep canonical data in server state, but project exactly one recipient-safe view per active seat |
 | Save game / periodic checkpoint | Return boolean `persist`; the trusted room host owns durable snapshots and the replay journal |
