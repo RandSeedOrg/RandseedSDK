@@ -18,6 +18,14 @@ Pin a reviewed tag or commit instead of `main` for reproducible builds.
 The package requires Node.js 20 or later and supports ESM imports. JavaScript
 and TypeScript use the same SDK; TypeScript declarations are included.
 
+For the room startup and first-observation rollout, use the browser
+`@randseed/game-sdk` 0.4.0 or a compatible later release once published, and
+rebuild and redeploy existing room games. The browser SDK handles the
+acknowledgement; no Server SDK upgrade or new game-server callback is required
+for this rollout. See
+[Room lifecycle and recovery](../protocol/room-host-v1.md#room-lifecycle-and-recovery)
+for startup, disconnect, state, and reconnect requirements.
+
 ## Minimal server (JavaScript)
 
 ```js
@@ -46,8 +54,9 @@ For matchmaking, `minPlayers` is the minimum number of assigned players the
 RandSeed platform needs before starting a match. It must be at least `1`; a
 zero-player start is not supported. A single-player game uses
 `minPlayers: 1`. `maxPlayers` must be at least `minPlayers` and is the room's
-seat cap, not a required fill count. For example, `minPlayers: 2, maxPlayers: 4` may start with
-two assigned players and leave two seats open. To require an exact roster size,
+seat cap, not a required fill count. Assigned players are not the same as
+connected WebSockets. For example, `minPlayers: 2, maxPlayers: 4` may start
+with two assigned players and leave two seats open. To require an exact roster size,
 set both values to that size. More players can join after startup only while
 the game reports `joinable: true` and seats remain below `maxPlayers`.
 

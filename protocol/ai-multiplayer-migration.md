@@ -49,7 +49,7 @@ Create a mapping table before editing:
 | Browser state reducer / turn handler | `tick(ctx, state)`; consume only the host-sealed inputs for this tick |
 | UI button or key binding | `TickInput.data`; validate its schema and return `actionResults` for supplied action IDs |
 | Player joins or reconnects | `onPlayerJoin(playerId, state)`; treat an already-present ID as reconnect, not a second seat |
-| Player disconnects or leaves | `onPlayerLeave(playerId, state)`; remove the seat and any no-longer-retained private data |
+| Player disconnects or leaves | `onPlayerLeave(playerId, state)`; apply the game's offline rules and retain or remove the player's logical seat and private data in game state as appropriate |
 | End-screen condition | `isGameOver(state)`; return a valid summary and `nextMatchPolicy` |
 | Browser-specific hidden fields | Keep canonical data in server state, but project exactly one recipient-safe view per active seat |
 | Save game / periodic checkpoint | Return boolean `persist`; the trusted room host owns durable snapshots and the replay journal |
@@ -69,6 +69,12 @@ reconnect. Make the join callback idempotent: update a seat only if it is not
 already present, and refresh its view baseline either way. A leave event must
 refer to an active seat. Inputs in the same step are checked against the roster
 after those events.
+
+The event does not distinguish a transient disconnect from a deliberate
+departure. Retain the seat and game state when the rules allow reconnect;
+otherwise apply a game-defined timeout or removal. Timers may continue while
+the player is offline, and there is no general SDK disconnect-wait setting.
+See [Room lifecycle and recovery](./room-host-v1.md#room-lifecycle-and-recovery).
 
 Do not use `Date.now()`, `setInterval`, process-local counters, unseeded
 randomness, or unrecorded network responses to determine gameplay. Use the

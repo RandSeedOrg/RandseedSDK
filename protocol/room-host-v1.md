@@ -87,7 +87,8 @@ version stable only while its meaning is unchanged.
 
 On the RandSeed platform, `minPlayers` is the minimum number of assigned
 players required before a match may start (at least one; zero-player starts
-are unsupported). A match can begin at this threshold while some seats remain
+are unsupported). It counts assigned players, not connected WebSockets.
+A match can begin at this threshold while some seats remain
 empty. `maxPlayers` is the maximum number of player seats, not a target the
 lobby must fill. For example, `minPlayers: 2` and `maxPlayers: 4` allows the
 platform to start with two assigned players and leaves capacity for up to two
@@ -307,7 +308,9 @@ must be an object containing a finite, non-negative `durationSeconds`. The polic
 a supported `mode` and a non-negative integer `timeoutMs` (include it even
 when the timeout is zero). Supported policy modes are `auto_next_match`,
 `wait_for_ready`, and `close_room`.
-Browser-ready signaling for `wait_for_ready` is not part of this protocol yet.
+Browser-ready signaling for `wait_for_ready` is outside this host-to-container
+protocol. On the RandSeed platform, it is a separate browser operation; it
+does not change the initial `minPlayers` threshold.
 
 Trusted host commands use `POST /onCommand` with
 `{ "command": { "type": "reset", "data": {} }, "state": ... }` and return
@@ -317,6 +320,99 @@ a player input API. Include `players` when returning `playerViews`.
 The stateful WebSocket contract, roster lifecycle ordering, recovery, action
 receipts, and structured stream errors are specified in
 [`session-stream-v1.md`](./session-stream-v1.md).
+
+## Room lifecycle and recovery
+
+The room host owns matching, authoritative player identity, scheduling,
+persistence, and recovery. The game server owns game rules and must calculate
+transitions from the supplied state and context. These responsibilities do not
+change the host-to-container request and response shapes above.
+
+### Startup and browser migration
+
+- The platform may start when the assigned roster reaches `minPlayers`;
+  assignment does not prove that every player is online. Late joins require
+  `joinable: true` and remaining capacity.
+- Browser `RoomClient.warm()` prepares a container; a ready warm receipt is
+  not proof that a match is initialized or that a player is connected.
+- The startup and first-observation rollout requires browser
+  `@randseed/game-sdk` 0.4.0 or a compatible later release. Once published,
+  update the browser dependency and lockfile, rebuild, and redeploy every
+  affected room game. An existing deployed bundle remains unchanged until
+  rebuilt. Coordinate the game release with the target platform environment.
+  Static games without rooms do not need this migration.
+- The browser SDK and platform handle first-snapshot acknowledgement. Do not
+  implement it in a game-server callback or imitate a protocol header in an
+  older browser SDK. This rollout does not require a Server SDK upgrade.
+  See the
+  [browser room SDK guide](https://github.com/RandSeedOrg/Gamecreator/blob/dev/docs/game-room-sdk.md)
+  for the platform rollout and client behavior.
+
+After confirming that version 0.4.0 is published, a game using npm can update
+its browser dependency with:
+
+```sh
+npm install --save-exact @randseed/game-sdk@0.4.0
+```
+
+Commit the dependency and lockfile, then run the game's normal build and
+deployment workflow. A package update alone does not replace an already
+deployed or immutable game release.
+
+### Disconnect and reconnect
+
+`onPlayerLeave` can be delivered when a player's connection closes, including
+a temporary disconnect. The player-event request contains `playerId` and
+`state`, but no reason that distinguishes a network failure from a deliberate
+departure. Do not assume one leave event means a player forfeited. An
+`onPlayerJoin` can represent a reconnect; handle an existing player
+idempotently instead of creating a second seat or resetting the hand.
+
+Decide and implement the game's own offline behavior in its authoritative
+state: for example, retain a player's logical seat and hand in canonical state for a bounded wait, or apply a
+game-defined timeout, automatic action, or forfeiture.
+general server SDK setting that makes the platform wait or pause a match for
+one disconnected player. Simulation and game timers can advance while a
+player is offline. A reconnect receives the current authoritative state, not
+necessarily the pre-disconnect state. Use the supplied tick and
+`elapsedSeconds` for deterministic gameplay timing; a platform idle pause
+when all players are offline is not a per-player wait guarantee.
+
+Store all information needed to continue the match, such as seats, hands,
+turns, deadlines, and random state, in the game state passed through the
+callbacks. Do not rely on browser state or process-local memory for recovery.
+Reconnect can fail when authorization expires or is revoked, the release
+changes, or the room is no longer available; it is not an unlimited
+reservation.
+
+### Private views and next matches
+
+For private-view games, return a view for every member of the resulting active
+roster on every transition as specified in the manifest contract above. A
+game may retain a disconnected player's game data in canonical state when its
+rules require it, but must never expose another player's hidden data in a
+recipient's view or broadcast. The platform handles eligible terminal-view
+retention; it does not replace the game's projection logic.
+
+`auto_next_match`, `wait_for_ready`, and `close_room` are distinct game-over
+policies, not disconnect policies. With `auto_next_match`, a reconnect after
+settlement may see a later match. Preserve required between-match data through
+the game-defined carryover. With `wait_for_ready`, platform readiness and its
+timeout determine when the next match may start. With `close_room`, a new
+allocation is needed for another room.
+
+### Verification checklist
+
+- Start with the configured minimum assigned roster, including an assigned
+  player who has not connected; verify late joining and `joinable` behavior.
+- Disconnect during a live turn and reconnect before and after the
+  game-defined deadline. Verify the player, room, match, seat, and hand before
+  the deadline, and the expected timeout or settlement afterward.
+- Verify separate player views with private-data canaries and exercise
+  reconnect after checkpoint recovery. Test each supported next-match policy.
+- In the target environment, rebuild with the published browser SDK, then
+  verify first connection, background/foreground renewal, reconnect, and a
+  second match with the actual deployed release.
 
 ## Result Units and metrics
 
