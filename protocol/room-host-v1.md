@@ -369,8 +369,8 @@ departure. Do not assume one leave event means a player forfeited. An
 idempotently instead of creating a second seat or resetting the hand.
 
 Decide and implement the game's own offline behavior in its authoritative
-state: for example, retain a seat and hand for a bounded wait, or apply a
-game-defined timeout, automatic action, or forfeiture. There is currently no
+state: for example, retain a player's logical seat and hand in canonical state for a bounded wait, or apply a
+game-defined timeout, automatic action, or forfeiture.
 general server SDK setting that makes the platform wait or pause a match for
 one disconnected player. Simulation and game timers can advance while a
 player is offline. A reconnect receives the current authoritative state, not
