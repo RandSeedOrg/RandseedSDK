@@ -16,11 +16,19 @@
     },
     {
       "name": "Room player limits",
-      "description": "Configure integers with 1 <= minPlayers <= maxPlayers <= 100. minPlayers is the assigned-player start threshold (solo games use 1; zero-player starts are unsupported); maxPlayers is seat capacity, not a fill target. Set both equal for a fixed-size roster."
+      "description": "Configure integers with 1 <= minPlayers <= maxPlayers <= 100. minPlayers counts assigned players, not connected WebSockets; maxPlayers is seat capacity, not a fill target. Set both equal for a fixed-size roster."
+    },
+    {
+      "name": "Room client migration",
+      "description": "For the startup and first-observation rollout, use browser @randseed/game-sdk 0.4.0 or a compatible later release once published; rebuild and redeploy room games. The browser SDK handles acknowledgement; no server SDK upgrade is required for this rollout."
     },
     {
       "name": "Session recovery",
-      "description": "Node.js and Rust support Session Stream v1 with checkpoint hydration, contiguous ticks, deterministic replay, and action results."
+      "description": "Node.js and Rust support Session Stream v1 with checkpoint hydration, contiguous ticks, deterministic replay, and action results. Keep seats, hands, turns, and timers in authoritative state so a reconnect can recover the current match."
+    },
+    {
+      "name": "Disconnect behavior",
+      "description": "A leave can be a temporary disconnect and a join can be a reconnect. Implement seat retention, waiting, timeouts, and forfeits in game rules; the server SDK does not configure a general per-player disconnect wait."
     },
     {
       "name": "Private player views",
@@ -52,8 +60,8 @@
         { "name": "GET /health", "description": "Container health and runtime identity." },
         { "name": "POST /init", "description": "Initialize a match from host-provided players and options." },
         { "name": "POST /tick", "description": "Apply one authoritative tick of player inputs and commands." },
-        { "name": "POST /onPlayerJoin", "description": "Handle a player joining or reconnecting." },
-        { "name": "POST /onPlayerLeave", "description": "Handle a player leaving the match." },
+        { "name": "POST /onPlayerJoin", "description": "Handle a player joining or reconnecting without duplicating an existing seat." },
+        { "name": "POST /onPlayerLeave", "description": "Handle a player disconnecting or leaving according to the game's offline rules; no disconnect reason is supplied." },
         { "name": "POST /isGameOver", "description": "Return terminal status, match summary, and next-match policy." },
         { "name": "POST /onCommand", "description": "Apply a trusted room-host command." }
       ]

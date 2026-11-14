@@ -22,6 +22,16 @@ repository. The Node package is installed from this GitHub repository, not
 from the npm registry. The browser-only SDK remains published on npm as
 [`@randseed/game-sdk`](https://www.npmjs.com/package/@randseed/game-sdk).
 
+The room startup and first-observation rollout requires the browser
+`RoomClient` from `@randseed/game-sdk` 0.4.0 or a compatible later release.
+Once that version is published, update the browser dependency and lockfile,
+then rebuild and redeploy each room game. Existing deployed bundles do not
+update automatically. This rollout does not change the Room Host Protocol v1
+or require a server SDK upgrade; game-server callbacks must not implement the
+browser's observation acknowledgement. Check the
+[room SDK guide](https://github.com/RandSeedOrg/Gamecreator/blob/dev/docs/game-room-sdk.md)
+and the target environment's rollout status before deploying.
+
 The Creator Portal's server SDK summary is sourced from
 [`metadata/gamecreator-server-sdk-guide.json`](./metadata/gamecreator-server-sdk-guide.json).
 On each push to `main`, this repository uses short-lived GitHub Actions OIDC to
@@ -77,6 +87,13 @@ only generic roster constraints. Gamecreator also enforces manifest bounds
 platform-side; the platform owns matchmaking and startup timing. This start
 threshold is separate from `wait_for_ready`, which coordinates the
 existing roster between completed and next matches.
+
+For startup, disconnect, reconnect, game-state retention, private views, and
+next-match behavior, see
+[Room lifecycle and recovery](./protocol/room-host-v1.md#room-lifecycle-and-recovery).
+The host provides recovery mechanisms; game rules decide whether an offline
+player waits, times out, or is removed. No general disconnect-wait policy is
+currently exposed by the server SDK.
 
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same
