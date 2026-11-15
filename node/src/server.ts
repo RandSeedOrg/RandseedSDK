@@ -38,7 +38,7 @@ import {
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 export interface CreateGameServerOptions {
-  /** Explicit test ID for local fixtures; deployed games use RANDSEED_GAME_ID. */
+  /** Optional compatibility check; the ID is always obtained from RANDSEED_GAME_ID. */
   gameId?: string;
 }
 
@@ -52,7 +52,7 @@ function resolveGameId(configuredId: string | undefined): string | undefined {
   if (platformId !== undefined && configuredId !== undefined && platformId !== configuredId) {
     throw new TypeError("gameId must match the platform-provided RANDSEED_GAME_ID.");
   }
-  return platformId ?? configuredId;
+  return platformId;
 }
 
 class RequestError extends Error {
