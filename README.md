@@ -106,9 +106,13 @@ statistics database or query API; verify archive commitment and query support
 before relying on them for rankings. See
 [Cross-release data continuity](./protocol/room-host-v1.md#cross-release-data-continuity).
 The Node.js and Rust `PlatformClient` APIs expose host-mediated SQL and
-key-value reads/writes; the host defines each binding's namespace, retention,
-and release scope. A game can read back data through those APIs when the
-selected storage contract guarantees it remains available.
+key-value operations, but they are not automatically game-wide storage. In
+the current Gamecreator host, `platform.db/sql` accesses the active GameRoom
+Durable Object's database, while `platform.kv` is an ephemeral in-memory
+room-local map. Neither is a cross-room leaderboard store. Result Unit archive
+queries are platform-internal; the Server SDK does not expose a general
+game-facing query API. Use only a game-level service explicitly documented by
+the target host for cross-release data.
 
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same

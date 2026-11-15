@@ -95,13 +95,27 @@ meaning or shape changes. A bug-fix deployment should preserve historical
 rankings when their metric meaning is unchanged; if the ranking is intentionally
 per-version or per-season, make that scope explicit in its key and UI.
 
-The game owns the data schema and can read back records it wrote through a
-storage API. Node.js and Rust `PlatformClient` implementations expose
-host-mediated SQL and key-value operations (`sql`, `kvGet`, and `kvPut`).
-These calls do not, by themselves, promise a particular namespace, retention
-period, or cross-release guarantee; use the target host's documented storage
-contract and verify it with an upgrade test. Do not confuse `persist: true`,
-which concerns room-state snapshots, with writing a durable game-level record.
+The game owns its data schema and can read back records through a storage API,
+but the API must have the right scope. On the current Gamecreator host,
+`PlatformClient.sql` reads and writes the active GameRoom Durable Object's SQL
+database; it is room-scoped, not a database shared by every room for the game.
+`kvGet`/`kvPut` use an in-memory map belonging to that room and are not durable
+across room-object restarts. These methods are suitable only for data whose
+lifetime is intentionally limited to that room.
+
+`persist: true` requests room-state snapshotting; it does not write an
+independent game-level record. Do not put an all-time leaderboard in
+`PlatformClient.sql`, `PlatformClient` KV, room state, or carryover and assume
+it will be visible from a newly allocated room or runtime version.
+
+For match results, emit Result Units and verify the host's archive acceptance.
+The Gamecreator Archive has result queries for trusted platform services, but
+the Server SDK does not expose a general game-facing leaderboard query API.
+The current Gamecreator game-server contract therefore has no general
+cross-room, cross-release persistence-and-query API for game-owned rankings or
+progression. Use a separately supported game-level service only when the
+target environment explicitly provides one; otherwise this needs a platform
+storage/query capability, not another room-local table.
 
 ## Result Units
 

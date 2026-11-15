@@ -28,7 +28,7 @@
     },
     {
       "name": "Cross-release data continuity",
-      "description": "Room recovery is pinned to a runtime version; releases do not migrate room state. For cross-release rankings, write and query explicitly durable game-level storage through host-provided APIs; Result Units alone are not a queryable database."
+      "description": "On Gamecreator, PlatformClient SQL is per-Room DO and KV is ephemeral. Neither is an all-time game store; Result Unit queries are internal. No general cross-release game-data query API is exposed to room servers."
     },
     {
       "name": "Disconnect behavior",

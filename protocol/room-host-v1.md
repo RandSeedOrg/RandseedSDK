@@ -435,13 +435,30 @@ ranking, provide a combined historical view, or migrate old results; do not
 silently assume the new release will see old room state.
 
 Game data schemas are publisher-defined, and game code can read back its writes
-only through a storage or query API that the host provides. Node.js and Rust
-`PlatformClient` expose host-mediated SQL and key-value operations, but the
-host contract determines whether a binding is durable, game-scoped, and stable
-across runtime versions. `persist: true` requests room-state snapshotting; it
-does not write an independent game-level record. Result Units likewise require
-an Archive commit and a host-provided query path before a game can use them to
-render historical rankings.
+only through a storage or query API that the host provides. On the current
+Gamecreator host, Node.js and Rust `PlatformClient.sql` reads/writes the active
+GameRoom Durable Object's SQLite database. It is durable for that Room DO, but
+room-scoped rather than shared across all rooms for a game. `PlatformClient`
+`kvGet`/`kvPut` use an in-memory map local to the Room DO and are not durable
+across object restarts. Neither is the correct store for an all-time leaderboard
+that must be visible from new rooms or releases.
+
+`persist: true` requests room-state snapshotting; it does not write an
+independent game-level record. Result Units are the game-to-host result-event
+contract; the host must accept and archive them, and a query API is separately
+required to display historical rankings. Gamecreator currently exposes
+Result Unit leaderboard queries to trusted internal services, not as a general
+Server SDK game-facing API. The current Gamecreator room Server SDK therefore
+does not provide a general cross-room, cross-release storage-and-query service
+for game-owned rankings or progression. Do not document `PlatformClient.sql`,
+room KV, or emitted Result Units as that service.
+
+If a target host separately provides a game-level service, its contract must
+document stable game/player keys, environment and release scope, retention,
+read/query authorization, schema migration, deletion, and backfill. Otherwise,
+cross-release game-owned rankings require a new platform storage/query
+capability or a game-owned backend that is reachable through an approved
+integration.
 
 Before deploying an upgrade, test with existing records: publish a new runtime
 version, create a room under it, and verify that the intended historical

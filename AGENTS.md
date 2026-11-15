@@ -10,11 +10,18 @@ Before changing room-game state or results:
   history only in room state, a bounded recent-history array, process memory,
   or browser storage. Use a game-level durable store with an explicitly verified
   cross-release namespace and retention policy.
-- Data schemas are game-defined and can be queried only through a storage API
-  the host exposes. Node.js/Rust `PlatformClient` SQL/KV operations are the
-  game-side read/write mechanism when the host documents their persistence and
-  scope; `persist: true` snapshots room state and is not an application-data
-  write.
+- Data schemas are game-defined, but a game can query them only through an
+  exposed read API. On current Gamecreator, `PlatformClient.sql` is scoped to
+  one Room Durable Object and `PlatformClient` KV is ephemeral room memory;
+  neither is a game-wide, cross-release store. Do not recommend them for
+  all-time rankings.
+- Do not claim Gamecreator Result Units are queryable by game code. The Server
+  SDK validates/emits events; the current Gamecreator Archive query is internal
+  and there is no general game-facing Server SDK leaderboard query.
+- `persist: true` persists room-state snapshots within the room scope, not
+  arbitrary application records. If a task requires cross-release game-owned
+  data and the target host has no documented game-level store/query API, state
+  that platform capability is missing instead of inventing a storage path.
 - Keep stable game/player identity keys independent of runtime version unless
   the data is intentionally version-scoped. Define schema migration, deletion,
   idempotency, and backfill behavior before changing persisted data.
