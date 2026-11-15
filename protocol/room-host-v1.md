@@ -434,6 +434,15 @@ backfill plan. If a metric's meaning changes, decide whether to start a new
 ranking, provide a combined historical view, or migrate old results; do not
 silently assume the new release will see old room state.
 
+Game data schemas are publisher-defined, and game code can read back its writes
+only through a storage or query API that the host provides. Node.js and Rust
+`PlatformClient` expose host-mediated SQL and key-value operations, but the
+host contract determines whether a binding is durable, game-scoped, and stable
+across runtime versions. `persist: true` requests room-state snapshotting; it
+does not write an independent game-level record. Result Units likewise require
+an Archive commit and a host-provided query path before a game can use them to
+render historical rankings.
+
 Before deploying an upgrade, test with existing records: publish a new runtime
 version, create a room under it, and verify that the intended historical
 rankings/progression remain visible. Confirm persisted result/archive receipts

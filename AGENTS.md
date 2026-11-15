@@ -10,13 +10,19 @@ Before changing room-game state or results:
   history only in room state, a bounded recent-history array, process memory,
   or browser storage. Use a game-level durable store with an explicitly verified
   cross-release namespace and retention policy.
+- Data schemas are game-defined and can be queried only through a storage API
+  the host exposes. Node.js/Rust `PlatformClient` SQL/KV operations are the
+  game-side read/write mechanism when the host documents their persistence and
+  scope; `persist: true` snapshots room state and is not an application-data
+  write.
 - Keep stable game/player identity keys independent of runtime version unless
   the data is intentionally version-scoped. Define schema migration, deletion,
   idempotency, and backfill behavior before changing persisted data.
 - Distinguish publisher `manifest.version`, platform runtime version, and
   `resultDefinition.version`. A Result Unit event is not proof of durable
   archival, delivery, or queryability; the Server SDK does not implement a
-  statistics or leaderboard query API.
+  statistics or leaderboard query API. Use an Archive query only when the host
+  exposes one; otherwise maintain a durable projection the game can read back.
 - For a metric-definition change, explicitly choose whether old and new results
   remain separate, are queried together, or are migrated. Never silently drop
   historical rankings because a release changed its definition version.

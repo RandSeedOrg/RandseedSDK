@@ -28,7 +28,7 @@
     },
     {
       "name": "Cross-release data continuity",
-      "description": "Room recovery is pinned to a game, environment, and runtime version; new releases do not migrate room state. Store all-time rankings and progression in explicitly durable game-level storage. Result Units alone do not provide persistence or queries."
+      "description": "Room recovery is pinned to a runtime version; releases do not migrate room state. For cross-release rankings, write and query explicitly durable game-level storage through host-provided APIs; Result Units alone are not a queryable database."
     },
     {
       "name": "Disconnect behavior",

@@ -105,6 +105,10 @@ migrations, and old-data backfill. Result Units are an event contract, not a
 statistics database or query API; verify archive commitment and query support
 before relying on them for rankings. See
 [Cross-release data continuity](./protocol/room-host-v1.md#cross-release-data-continuity).
+The Node.js and Rust `PlatformClient` APIs expose host-mediated SQL and
+key-value reads/writes; the host defines each binding's namespace, retention,
+and release scope. A game can read back data through those APIs when the
+selected storage contract guarantees it remains available.
 
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same

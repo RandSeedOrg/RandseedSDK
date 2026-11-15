@@ -95,6 +95,14 @@ meaning or shape changes. A bug-fix deployment should preserve historical
 rankings when their metric meaning is unchanged; if the ranking is intentionally
 per-version or per-season, make that scope explicit in its key and UI.
 
+The game owns the data schema and can read back records it wrote through a
+storage API. Node.js and Rust `PlatformClient` implementations expose
+host-mediated SQL and key-value operations (`sql`, `kvGet`, and `kvPut`).
+These calls do not, by themselves, promise a particular namespace, retention
+period, or cross-release guarantee; use the target host's documented storage
+contract and verify it with an upgrade test. Do not confuse `persist: true`,
+which concerns room-state snapshots, with writing a durable game-level record.
+
 ## Result Units
 
 Declare versioned result-unit types and metric aggregations in the manifest,
@@ -153,7 +161,10 @@ persist or deliver results and does not provide statistics queries.
 not the game release or runtime version. Keep it stable for bug fixes that do
 not change metric meaning. When its meaning changes, plan how readers will
 combine or migrate the old and new result series. Never assume that emitting a
-Result Unit creates a cross-version leaderboard.
+Result Unit creates a cross-version leaderboard. The game can query archived
+results only if the target platform exposes an authorized Archive query API;
+otherwise, write a durable game-level projection through an available storage
+service and read it back there.
 
 For TypeScript, import `type GameServer` from the same package and declare
 `const game: GameServer<State> = ...`. Set `"type": "module"` in a JavaScript
