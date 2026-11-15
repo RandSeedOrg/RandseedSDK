@@ -50,6 +50,13 @@ const game = {
 createGameServer(game, Number(process.env.PORT ?? 8080));
 ```
 
+The platform supplies the canonical `RANDSEED_GAME_ID` to the server process.
+The SDK uses it for health checks and Agent player-view scope checks. A missing
+ID makes these endpoints unavailable; invalid or conflicting configured IDs
+prevent startup. Local fixtures may pass an explicit test ID through
+`{ gameId }`. Never substitute a repository slug, deployment ID, or guessed
+value in a deployed game.
+
 For matchmaking, `minPlayers` is the minimum number of assigned players the
 RandSeed platform needs before starting a match. It must be at least `1`; a
 zero-player start is not supported. A single-player game uses
