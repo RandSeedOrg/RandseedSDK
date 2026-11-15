@@ -21,6 +21,7 @@ var gameResult = Read<GameResult>("gameOverResponse");
 var commandResult = Read<CommandResult>("commandResponse");
 
 VerifyMulberryVectors();
+VerifyChaCha20Vectors();
 await VerifyHttpHostAsync();
 await VerifyResultUnitHostAsync();
 Console.WriteLine("All .NET SDK fixture, PRNG, validation, and HTTP serialization checks passed.");
@@ -50,6 +51,137 @@ void VerifyMulberryVectors()
     Assert(Mulberry32.ToInt32(4_294_967_296d) == 0, "ToInt32 full-wrap mismatch");
     Assert(Mulberry32.ToInt32(-1.9d) == -1, "ToInt32 must truncate toward zero");
     Assert(Mulberry32.ToInt32(double.PositiveInfinity) == 0, "ToInt32 non-finite conversion mismatch");
+}
+
+void VerifyChaCha20Vectors()
+{
+    foreach (var vector in fixture.GetProperty("chacha20Vectors").EnumerateArray())
+    {
+        var seedHex = vector.GetProperty("seedHex").GetString()!;
+        var stream = vector.GetProperty("stream").GetUInt64();
+        var wordPos = vector.GetProperty("wordPos").GetUInt64();
+        var expectedU32 = vector.GetProperty("u32").EnumerateArray().Select(v => v.GetUInt32()).ToArray();
+        var expectedBounded = vector.GetProperty("bounded100").EnumerateArray().Select(v => v.GetUInt32()).ToArray();
+
+        var rng = ChaCha20Rng.FromState(new ChaCha20State(seedHex, stream, wordPos));
+        foreach (var value in expectedU32)
+        {
+            Assert(rng.NextUInt32() == value, $"ChaCha20Rng NextUInt32 mismatch for seed {seedHex}");
+        }
+
+        var boundedRng = ChaCha20Rng.FromState(new ChaCha20State(seedHex, stream, wordPos));
+        foreach (var value in expectedBounded)
+        {
+            Assert(boundedRng.NextBounded(100u) == value, $"ChaCha20Rng NextBounded(100) mismatch for seed {seedHex}");
+        }
+
+        var snapshot = boundedRng.GetState();
+        var serializedSnapshot = JsonSerializer.Serialize(snapshot, jsonOptions);
+        var deserializedSnapshot = JsonSerializer.Deserialize<ChaCha20State>(serializedSnapshot, jsonOptions)
+            ?? throw new InvalidOperationException("ChaCha20State deserialized to null.");
+        Assert(deserializedSnapshot == snapshot, "ChaCha20State JSON round-trip mismatch.");
+        Assert(ChaCha20Rng.FromState(deserializedSnapshot).NextUInt32() == boundedRng.NextUInt32(),
+            "ChaCha20Rng restored from JSON state diverged.");
+    }
+
+    var validSeedHex = new string('a', ChaCha20Rng.RandomSeedHexLength);
+    var maxCursorRng = ChaCha20Rng.FromHex(validSeedHex, ChaCha20Rng.MaxSafeCursor, ChaCha20Rng.MaxSafeCursor);
+    var maxCursorState = maxCursorRng.GetState();
+    var maxCursorJson = JsonSerializer.Serialize(maxCursorState, jsonOptions);
+    Assert(JsonSerializer.Deserialize<ChaCha20State>(maxCursorJson, jsonOptions) == maxCursorState,
+        "MaxSafeCursor ChaCha20State JSON round-trip mismatch.");
+
+    _ = maxCursorRng.NextUInt32();
+    var rejectedUnsafeWordPos = false;
+    try
+    {
+        _ = maxCursorRng.GetState();
+    }
+    catch (InvalidOperationException)
+    {
+        rejectedUnsafeWordPos = true;
+    }
+    Assert(rejectedUnsafeWordPos, "GetState() accepted WordPos > MaxSafeCursor.");
+
+    var unsafeStreamRng = ChaCha20Rng.FromHex(validSeedHex, ChaCha20Rng.MaxSafeCursor + 1UL, 0UL);
+    var rejectedUnsafeStream = false;
+    try
+    {
+        _ = unsafeStreamRng.GetState();
+    }
+    catch (InvalidOperationException)
+    {
+        rejectedUnsafeStream = true;
+    }
+    Assert(rejectedUnsafeStream, "GetState() accepted Stream > MaxSafeCursor.");
+
+    foreach (var invalidState in new[]
+    {
+        new ChaCha20State("abcd", 0UL, 0UL),
+        new ChaCha20State(validSeedHex.ToUpperInvariant(), 0UL, 0UL),
+        new ChaCha20State(validSeedHex, ChaCha20Rng.MaxSafeCursor + 1UL, 0UL),
+        new ChaCha20State(validSeedHex, 0UL, ChaCha20Rng.MaxSafeCursor + 1UL)
+    })
+    {
+        var rejectedSerialize = false;
+        try
+        {
+            _ = JsonSerializer.Serialize(invalidState, jsonOptions);
+        }
+        catch (JsonException)
+        {
+            rejectedSerialize = true;
+        }
+        Assert(rejectedSerialize, $"Serialize<ChaCha20State> accepted invalid state: {invalidState}");
+    }
+
+    foreach (var badJson in new[]
+    {
+        """[]""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":0,"wordPos":0,"extra":1}""",
+        $$$"""{"seedHex":"{{{validSeedHex.ToUpperInvariant()}}}","stream":0,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":-1,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":1.5,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":9007199254740992,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":0,"wordPos":9007199254740992}"""
+    })
+    {
+        var rejectedJson = false;
+        try
+        {
+            _ = JsonSerializer.Deserialize<ChaCha20State>(badJson, jsonOptions);
+        }
+        catch (JsonException)
+        {
+            rejectedJson = true;
+        }
+        Assert(rejectedJson, $"Deserialize<ChaCha20State> accepted invalid JSON: {badJson}");
+    }
+
+    var overflowRng = ChaCha20Rng.FromHex(validSeedHex, 0UL, ulong.MaxValue);
+    var caughtOverflow = false;
+    try
+    {
+        _ = overflowRng.NextUInt32();
+    }
+    catch (OverflowException)
+    {
+        caughtOverflow = true;
+    }
+    Assert(caughtOverflow, "NextUInt32() did not throw OverflowException at ulong.MaxValue.");
+
+    foreach (var vector in fixture.GetProperty("deriveSeedVectors").EnumerateArray())
+    {
+        var rootSeedHex = vector.GetProperty("rootSeedHex").GetString()!;
+        var domains = vector.GetProperty("domains").EnumerateArray().Select(v => v.GetString()!).ToArray();
+        var expectedHex = vector.GetProperty("derivedSeedHex").GetString()!;
+        var expectedFirstU32 = vector.GetProperty("firstU32").GetUInt32();
+
+        var derivedHex = ChaCha20Rng.DeriveSeedHex(rootSeedHex, domains);
+        Assert(derivedHex == expectedHex, $"DeriveSeedHex mismatch for {rootSeedHex}");
+        Assert(ChaCha20Rng.FromHex(derivedHex).NextUInt32() == expectedFirstU32, $"DeriveSeedHex firstU32 mismatch for {rootSeedHex}");
+    }
 }
 
 async Task VerifyHttpHostAsync()
@@ -100,7 +232,13 @@ async Task VerifyHttpHostAsync()
         {
             ("", HttpStatusCode.OK),
             (""","options":{}""", HttpStatusCode.OK),
-            (""","options":null""", HttpStatusCode.BadRequest)
+            (""","options":null""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","randomSeedIndex":0}""", HttpStatusCode.OK),
+            (""","options":{"randomSeed":null}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeed":"ABCD"}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeedIndex":-1}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeedIndex":1.5}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeedIndex":9007199254740992}""", HttpStatusCode.BadRequest)
         })
         {
             using var response = await PostRawAsync(client, "/init",

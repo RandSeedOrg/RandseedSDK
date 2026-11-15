@@ -123,7 +123,12 @@ at 1 MiB.
   "gameId": "room-counter",
   "players": ["pairwise-a", "pairwise-b"],
   "matchSeq": 1,
-  "options": { "seed": 4294967295, "mode": "ranked" },
+  "options": {
+    "randomSeed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "randomSeedIndex": 42,
+    "seed": 50462976,
+    "mode": "ranked"
+  },
   "carryover": null,
   "tickRateHz": 5
 }
@@ -133,8 +138,18 @@ at 1 MiB.
 `matchSeq` is a positive safe integer. `tickRateHz`, when present, is a finite
 number between 1 and 60; fractional rates are valid and `null` is not valid.
 `options` may be omitted; when present it must be an object, not `null`.
-`options.seed`, when present, is a finite JSON number. Other `options` entries are game-owned
-JSON configuration. `carryover` is opaque JSON and may be any JSON value.
+`options.randomSeed`, when present, must be a 64-character lowercase ASCII hex
+string (`^[0-9a-f]{64}$`) encoding the host-supplied 32-byte (`[u8; 32]`) VRF
+match root seed; `null` and non-canonical strings are rejected with
+`INVALID_OPTIONS`. `options.randomSeedIndex`, when present, must be a
+non-negative safe integer (`0 <= n <= 9007199254740991`) recording the on-chain
+`random_oracle` record index; `null`, fractional, negative, or unsafe integers
+are rejected with `INVALID_OPTIONS`. `options.seed`, when present, is a finite
+JSON number (`u32_le(randomSeed[0..4])` when derived from `randomSeed`, retained
+for legacy 32-bit compatibility). Clients may never supply `seed`,
+`randomSeed`, or `randomSeedIndex`; the trusted room host injects them. Other
+`options` entries are game-owned JSON configuration. `carryover` is opaque JSON
+and may be any JSON value.
 
 ### Agent player protocol v1
 
@@ -496,11 +511,32 @@ same inputs. Do not use wall-clock time, process-global authoritative match
 state, operating-system randomness, or unrecorded network responses in
 authoritative simulation.
 
-`options.seed` is consumed by the deterministic Mulberry32 generator. Seed
-conversion follows JavaScript signed 32-bit conversion (`ToInt32`) before the
-Mulberry32 steps. `nextU32` returns the unsigned 32-bit output; `nextFloat`
-returns `nextU32 / 2^32` in `[0, 1)`. The shared fixture defines cross-language
-test vectors. This PRNG is deterministic, not cryptographic, and is not GameVRF.
+Each match receives a single authoritative 32-byte VRF root seed in
+`options.randomSeed` (64 lowercase hex characters), kept confidential during an
+active match and publicized on-chain after match settlement. Do not expose
+`options.randomSeed`, raw PRNG keys, or `options.seed` in live `playerViews` or
+mid-match broadcasts.
+
+Authoritative simulation randomness should use `ChaCha20Rng` (20-round ChaCha20
+matching `rand_chacha::ChaCha20Rng`: `"expand 32-byte k"` constants, 8
+little-endian `u32` key words in `state[4..12]`, 64-bit little-endian block
+counter in `state[12..14]`, 64-bit little-endian stream ID in `state[14..16]`,
+and sequential little-endian `u32` word consumption). Either persist the
+serializable cursor `{ seedHex, stream, wordPos }` in canonical game state or
+derive independent sub-seeds per phase/tick using `deriveSeed`:
+
+`SHA-256("randseed-chacha20-derive-v1\0" || rootSeed[0..32] || u32_le(domains.length) || concat(u32_le(domain.byteLength) || domain))`
+
+Bounded integers (`nextBounded(bound)`) use unbiased rejection sampling over
+`u32` (`limit = 2^32 - (2^32 % bound)`, returning `candidate % bound` for the
+first `candidate < limit`), and `nextFloat` returns `nextU32 / 2^32` in
+`[0, 1)`. Cross-language golden vectors are defined in `chacha20Vectors` and
+`deriveSeedVectors` in [`fixtures/room-host-v1.json`](./fixtures/room-host-v1.json).
+
+`options.seed` and the 32-bit `Mulberry32` generator (`ToInt32` seed conversion,
+`prngVectors` in the shared fixture) remain supported for backward compatibility
+with legacy releases; new games should use `options.randomSeed` and
+`ChaCha20Rng`.
 
 ## Shared compatibility fixture
 

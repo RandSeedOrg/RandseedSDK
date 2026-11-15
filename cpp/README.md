@@ -3,7 +3,8 @@
 This C++20 SDK implements the game-container side of the
 [Room Host v1 protocol](../protocol/room-host-v1.md). It provides a game
 callback interface, arbitrary JSON state and payloads, a bounded HTTP host for
-all v1 lifecycle routes, and the protocol's deterministic Mulberry32 generator.
+all v1 lifecycle routes, and deterministic `ChaCha20Rng` / `derive_seed` (plus
+legacy `Mulberry32`) generators.
 
 ## Requirements and dependencies
 
@@ -145,6 +146,10 @@ two seats open. Set both values to the same number when the game needs an exact
 roster size. After startup, additional seats are admitted only while the game
 reports `joinable = true` and the roster remains below `max_players`.
 
-`randseed::Mulberry32` accepts a numeric seed, applies JavaScript-compatible
-`ToInt32` conversion, and exposes `next_u32()` and `next_float()`. It is a
-deterministic simulation PRNG, not a cryptographic generator or GameVRF.
+`randseed::ChaCha20Rng` and `randseed::derive_seed` provide cross-language
+20-round ChaCha20 randomness seeded from the host-injected 256-bit VRF root seed
+(`options["randomSeed"]`), with validated JSON-safe `randseed::ChaCha20State`
+cursor snapshots (`rng.state()` / `ChaCha20Rng::from_state()`).
+`randseed::Mulberry32` accepts a legacy numeric seed (`options["seed"]`), applies
+JavaScript-compatible `ToInt32` conversion, and exposes `next_u32()` and
+`next_float()`.

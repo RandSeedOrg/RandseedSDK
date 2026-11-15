@@ -15,6 +15,10 @@
       "description": "A shared match lifecycle for initialization, ticks, player joins and leaves, trusted room commands, and terminal results."
     },
     {
+      "name": "Deterministic VRF & ChaCha20Rng",
+      "description": "Each match receives one 256-bit random_oracle root seed (options.randomSeed) paired with cross-language ChaCha20Rng and SHA-256 domain-separated deriveSeed across all 5 backend SDKs."
+    },
+    {
       "name": "Room player limits",
       "description": "Configure integers with 1 <= minPlayers <= maxPlayers <= 100. minPlayers counts assigned players, not connected WebSockets; maxPlayers is seat capacity, not a fill target. Set both equal for a fixed-size roster."
     },

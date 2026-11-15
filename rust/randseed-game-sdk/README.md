@@ -2,8 +2,9 @@
 
 The `randseed-game-sdk` crate helps Rust games implement the RandSeed room-host
 HTTP/JSON protocol. It provides typed lifecycle contracts, an Axum router and
-server runner, deterministic Mulberry32 random numbers, replay data helpers,
-and a client for host-provided platform services.
+server runner, deterministic `ChaCha20Rng` and `derive_seed` (plus legacy
+`Mulberry32`), replay data helpers, and a client for host-provided platform
+services.
 
 The room host owns scheduling, persistence, player identity, and recovery.
 Implement authoritative game logic as calculations from the supplied state
@@ -101,10 +102,14 @@ retries; corrections are append-only events.
   guidance from the [shared error fixture](../../protocol/fixtures/sdk-error-codes-v1.json).
 - Lifecycle methods must calculate outcomes from the state and context they
   receive so a room host can replay them after recovery.
-- `Mulberry32` follows JavaScript `ToInt32` seed conversion. Its cross-language
-  vectors are in
+- `ChaCha20Rng` and `derive_seed` / `derive_seed_strs` / `derive_seed_hex`
+  provide cross-language 20-round ChaCha20 randomness matching
+  `rand_chacha::ChaCha20Rng` from the host-injected 256-bit VRF root seed
+  (`options.random_seed`), with validated JSON-safe `{ seedHex, stream, wordPos }`
+  cursor snapshots (`ChaCha20State`, `MAX_SAFE_CURSOR`). `Mulberry32` (using
+  JavaScript `ToInt32` seed conversion) remains available for legacy
+  `options.seed` compatibility. Cross-language golden vectors are in
   [`tests/fixtures/room-host-v1.json`](tests/fixtures/room-host-v1.json).
-  It is deterministic, not cryptographic, and is not GameVRF.
 - `PlatformClient` calls host services; do not make those calls a source of
   unrecorded authoritative simulation inputs.
 

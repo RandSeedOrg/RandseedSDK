@@ -78,10 +78,12 @@ See [Room lifecycle and recovery](./room-host-v1.md#room-lifecycle-and-recovery)
 
 Do not use `Date.now()`, `setInterval`, process-local counters, unseeded
 randomness, or unrecorded network responses to determine gameplay. Use the
-supplied tick and elapsed time, `mulberry32` for deterministic non-cryptographic
-randomness, and include random state in the checkpointed game state. `persist`
-requests a snapshot but does not choose the host's durability tier or persist
-data by itself.
+supplied tick and elapsed time, `ChaCha20Rng` / `deriveSeed` seeded from
+`options.randomSeed` (or `mulberry32` for legacy `options.seed` compatibility),
+and persist any `{ seedHex, stream, wordPos }` cursor in the checkpointed
+canonical state without leaking `options.randomSeed` or raw PRNG keys to live
+`playerViews` or broadcasts. `persist` requests a snapshot but does not choose
+the host's durability tier or persist data by itself.
 
 On restart, the host hydrates the game with the latest checkpoint and replays
 each later committed tick exactly once in order. A replay gap, duplicate tick,
@@ -99,9 +101,11 @@ a host-side reset or migration; never silently replace it with an empty state.
 
 Declare a JSON Schema in `manifest.optionsSchema` for Creator tooling, then
 validate actual option values in `init`. The SDK verifies that options are a
-JSON object and that the optional seed is finite, but it does not execute a
-game-specific JSON Schema validator. Return `INVALID_OPTIONS` with a
-creator-facing correction when options cannot initialize a match.
+JSON object and validates `options.randomSeed` (64 lowercase hex characters),
+`options.randomSeedIndex` (non-negative safe integer), and optional `options.seed`
+(finite number), but it does not execute a game-specific JSON Schema validator.
+Return `INVALID_OPTIONS` with a creator-facing correction when options cannot
+initialize a match.
 
 ## Per-seat privacy
 
@@ -148,5 +152,5 @@ cargo test --manifest-path Cargo.toml -p randseed-game-sdk
 
 The examples are illustrative implementations of the shared contract. They do
 not implement room matchmaking, authentication, browser transport, database
-persistence, archive delivery, payments, GameVRF, or spectator authorization;
-those remain host/platform responsibilities.
+persistence, archive delivery, payments, direct `random_oracle` canister calls,
+or spectator authorization; those remain host/platform responsibilities.

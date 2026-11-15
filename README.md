@@ -45,6 +45,10 @@ this repository.
 
 - **Authoritative multiplayer lifecycle** across Node.js/TypeScript, Go, Rust,
   C#, and C++.
+- **Deterministic VRF root seed and `ChaCha20Rng`** across all five backend
+  SDKs (`options.randomSeed` + SHA-256 domain-separated `deriveSeed` + validated
+  `{ seedHex, stream, wordPos }` JSON cursor snapshots), with `options.seed` and
+  `Mulberry32` retained for legacy compatibility.
 - **Stateful low-latency sessions** with checkpoint hydration and deterministic
   replay in the Node.js and Rust SDKs.
 - **Per-seat private views and action receipts** in Node.js and Rust, with
@@ -98,7 +102,7 @@ currently exposed by the server SDK.
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same
 [wire fixture](./protocol/fixtures/room-host-v1.json), including deterministic
-Mulberry32 test vectors. Result Unit declarations and events are also validated
+`ChaCha20Rng`, `deriveSeed`, and legacy `Mulberry32` test vectors. Result Unit declarations and events are also validated
 against the shared [Result Unit fixture](./protocol/fixtures/game-result-event-v1.json).
 Stateful WebSocket recovery and action receipt behavior follow
 [`Session Stream v1`](./protocol/session-stream-v1.md) and its shared
@@ -115,6 +119,8 @@ and run the Node/Rust migration preflight documented there.
 The room host owns scheduling, authoritative persistence, player identity,
 and recovery. Game code must calculate from the supplied state and context;
 it must not run a separate authoritative timer or rely on process-global match
-state. The current server SDKs and room host do not include a GameVRF client
-or call the GameVRF canister; VRF is not currently available through this room
-runtime.
+state. For verifiable randomness, the trusted room host injects one 256-bit
+`random_oracle` VRF root seed per match via `options.randomSeed` (kept
+confidential during live play and publicized after settlement); game containers
+derive simulation streams locally with `ChaCha20Rng` / `deriveSeed` and do not
+call VRF canisters directly.

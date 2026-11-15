@@ -1,5 +1,7 @@
 #pragma once
 
+#include "randseed/chacha20.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -173,6 +175,7 @@ struct GameOverResult {
     std::optional<std::vector<GameResultEvent>> result_units{std::nullopt};
 };
 
+[[nodiscard]] ChaCha20State parse_chacha20_state(const Json& value);
 [[nodiscard]] GameManifest parse_game_manifest(const Json& value);
 [[nodiscard]] GameResultDefinition parse_game_result_definition(const Json& value);
 [[nodiscard]] GameResultEvent parse_game_result_event(
@@ -192,6 +195,8 @@ void validate_game_result_units(
     const std::optional<std::vector<GameResultEvent>>& events,
     const GameResultDefinition* definition = nullptr);
 
+void to_json(Json& value, const ChaCha20State& state);
+void from_json(const Json& value, ChaCha20State& state);
 void to_json(Json& value, const GameManifest& manifest);
 void from_json(const Json& value, GameManifest& manifest);
 void to_json(Json& value, const GameResultDefinition& definition);

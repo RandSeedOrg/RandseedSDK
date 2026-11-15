@@ -1,5 +1,6 @@
 import type { GameCommand, GameManifest, JsonValue, MatchConfig, TickContext } from "./types.js";
 import { SdkProtocolError } from "./errors.js";
+import { isValidSeedHex } from "./prng.js";
 import {
   isValidActionSchemaId,
   isValidProtocolKey,
@@ -143,6 +144,26 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
     (typeof config.options.seed !== "number" || !Number.isFinite(config.options.seed))
   ) {
     throw new SdkProtocolError("INVALID_OPTIONS", "options.seed must be a finite number.");
+  }
+  if (
+    isRecord(config.options) &&
+    Object.hasOwn(config.options, "randomSeed") &&
+    !isValidSeedHex(config.options.randomSeed)
+  ) {
+    throw new SdkProtocolError(
+      "INVALID_OPTIONS",
+      "options.randomSeed must be a 64-character lowercase hex string.",
+    );
+  }
+  if (
+    isRecord(config.options) &&
+    Object.hasOwn(config.options, "randomSeedIndex") &&
+    (!isSafeInteger(config.options.randomSeedIndex) || config.options.randomSeedIndex < 0)
+  ) {
+    throw new SdkProtocolError(
+      "INVALID_OPTIONS",
+      "options.randomSeedIndex must be a non-negative safe integer.",
+    );
   }
   if (hasOptions) {
     try {

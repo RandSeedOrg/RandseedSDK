@@ -8,10 +8,10 @@ use crate::agent_player_view::{
 use crate::errors::{SdkError, SdkErrorCode};
 use crate::server::GameServer;
 use crate::types::{
-    validate_game_result_units, validate_player_views, CommandResult, GameActionResult,
-    GameCommand, GameManifest, GameResult, GameResultEvent, InitResult, IsGameOverRequest,
-    MatchConfig, PlayerEventRequest, PlayerEventResult, PlayerViewMode, TickContext, TickInput,
-    TickResult,
+    validate_game_result_units, validate_player_views, CommandRequest, CommandResult,
+    GameActionResult, GameCommand, GameManifest, GameResult, GameResultEvent, InitResult,
+    IsGameOverRequest, MatchConfig, PlayerEventRequest, PlayerEventResult, PlayerViewMode,
+    TickContext, TickInput, TickRequest, TickResult,
 };
 use async_trait::async_trait;
 use axum::extract::ws::{Message, WebSocket};
@@ -904,7 +904,12 @@ impl<G: GameServer> ValueStreamSession<G> {
                             "command.type must be a non-empty string.".into(),
                         ));
                     }
-                    let res = guard_unwind(game.on_command(command, cur_state)).await?;
+                    let res = guard_unwind(game.on_command_ext(CommandRequest {
+                        command,
+                        state: cur_state,
+                        players: Some(players.clone()),
+                    }))
+                    .await?;
                     validate_result_units(res.result_units.as_deref())?;
                     validate_player_views(
                         res.player_views.as_ref(),
@@ -938,7 +943,12 @@ impl<G: GameServer> ValueStreamSession<G> {
             inputs,
             commands: Vec::new(),
         };
-        let tick_res = guard_unwind(game.tick(ctx, cur_state)).await?;
+        let tick_res = guard_unwind(game.tick_ext(TickRequest {
+            ctx,
+            state: cur_state,
+            players: players.clone(),
+        }))
+        .await?;
         validate_result_units(tick_res.result_units.as_deref())?;
         validate_action_results_contract(
             tick_res.action_results.as_deref(),

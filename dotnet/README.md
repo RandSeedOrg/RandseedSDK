@@ -74,8 +74,11 @@ validation against a declared result definition.
 
 Use the supplied state and tick context as the authoritative inputs to game
 callbacks. Avoid process-global match state, wall-clock simulation, or
-unrecorded external inputs. `Mulberry32` implements the protocol's deterministic
-generator and JavaScript signed 32-bit seed conversion; it is not cryptographic.
+unrecorded external inputs. `ChaCha20Rng` (`FromHex`, `FromDerived`, `DeriveSeed`,
+and `ChaCha20State` cursor snapshots) implements cross-language 20-round
+ChaCha20 randomness seeded from `options.randomSeed`; `Mulberry32` (with
+JavaScript signed 32-bit seed conversion) remains available for legacy
+`options.seed` compatibility.
 
 ## Build and verify
 

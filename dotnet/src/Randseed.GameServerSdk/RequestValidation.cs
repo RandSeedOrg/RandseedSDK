@@ -271,6 +271,26 @@ internal static class RequestValidation
             return "options.seed must be a finite JSON number";
         }
 
+        if (IsDefined(config.Options) &&
+            config.Options.TryGetProperty("randomSeed", out var randomSeed) &&
+            (randomSeed.ValueKind != JsonValueKind.String ||
+             !ChaCha20Rng.IsValidSeedHex(randomSeed.GetString())))
+        {
+            return "options.randomSeed must be a 64-character lowercase hex string";
+        }
+
+        if (IsDefined(config.Options) &&
+            config.Options.TryGetProperty("randomSeedIndex", out var randomSeedIndex) &&
+            (randomSeedIndex.ValueKind != JsonValueKind.Number ||
+             !randomSeedIndex.TryGetDouble(out var seedIndexDouble) ||
+             !double.IsFinite(seedIndexDouble) ||
+             Math.Truncate(seedIndexDouble) != seedIndexDouble ||
+             seedIndexDouble < 0d ||
+             seedIndexDouble > MaxSafeInteger))
+        {
+            return "options.randomSeedIndex must be a non-negative safe integer";
+        }
+
         return null;
     }
 

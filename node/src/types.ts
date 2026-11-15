@@ -89,7 +89,12 @@ export interface GameResultEvent {
 }
 
 export interface MatchOptions {
+  /** Legacy numeric seed retained for Mulberry32 compatibility. */
   seed?: number;
+  /** Authoritative 32-byte match root seed encoded as 64 lowercase hex characters (`ChaCha20Rng`). */
+  randomSeed?: string;
+  /** Optional non-negative safe-integer index of `randomSeed` in the on-chain `random_oracle` canister. */
+  randomSeedIndex?: number;
   [key: string]: unknown;
 }
 

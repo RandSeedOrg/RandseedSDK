@@ -1,3 +1,4 @@
+#include "randseed/chacha20.hpp"
 #include "randseed/mulberry32.hpp"
 #include "randseed/room_host.hpp"
 
@@ -264,6 +265,110 @@ void test_prng_vectors(const Json& fixture) {
     randseed::Mulberry32 float_generator(1.0);
     const double next_float = float_generator.next_float();
     require(next_float >= 0.0 && next_float < 1.0, "next_float is out of range");
+
+    for (const auto& vector : fixture.at("chacha20Vectors")) {
+        const randseed::ChaCha20State state{
+            .seed_hex = vector.at("seedHex").get<std::string>(),
+            .stream = vector.at("stream").get<std::uint64_t>(),
+            .word_pos = vector.at("wordPos").get<std::uint64_t>()};
+        auto rng = randseed::ChaCha20Rng::from_state(state);
+        for (const auto& expected : vector.at("u32")) {
+            require(
+                rng.next_u32() == expected.get<std::uint32_t>(),
+                "ChaCha20Rng next_u32 differs from fixture");
+        }
+
+        auto bounded_rng = randseed::ChaCha20Rng::from_state(state);
+        for (const auto& expected : vector.at("bounded100")) {
+            require(
+                bounded_rng.next_bounded(100U) == expected.get<std::uint32_t>(),
+                "ChaCha20Rng next_bounded(100) differs from fixture");
+        }
+
+        const auto mid_state = bounded_rng.state();
+        const Json encoded_state(mid_state);
+        const auto decoded_state = encoded_state.get<randseed::ChaCha20State>();
+        require(decoded_state == mid_state, "ChaCha20State JSON round-trip mismatch");
+        auto restored_rng = randseed::ChaCha20Rng::from_state(decoded_state);
+        require(
+            restored_rng.next_u32() == bounded_rng.next_u32(),
+            "ChaCha20Rng restored from JSON state differs");
+    }
+
+    const std::string valid_seed(64U, '1');
+    auto max_cursor_rng = randseed::ChaCha20Rng::from_seed_hex(
+        valid_seed, randseed::max_safe_cursor, randseed::max_safe_cursor);
+    const auto max_state = max_cursor_rng.state();
+    require(
+        Json(max_state).get<randseed::ChaCha20State>() == max_state,
+        "max_safe_cursor ChaCha20State failed JSON round-trip");
+
+    static_cast<void>(max_cursor_rng.next_u32());
+    bool rejected_unsafe_word_pos = false;
+    try {
+        static_cast<void>(max_cursor_rng.state());
+    } catch (const std::invalid_argument&) {
+        rejected_unsafe_word_pos = true;
+    }
+    require(
+        rejected_unsafe_word_pos,
+        "ChaCha20Rng::state() accepted word_pos > max_safe_cursor");
+
+    auto unsafe_stream_rng = randseed::ChaCha20Rng::from_seed_hex(
+        valid_seed, randseed::max_safe_cursor + 1ULL, 0ULL);
+    bool rejected_unsafe_stream = false;
+    try {
+        static_cast<void>(unsafe_stream_rng.state());
+    } catch (const std::invalid_argument&) {
+        rejected_unsafe_stream = true;
+    }
+    require(
+        rejected_unsafe_stream,
+        "ChaCha20Rng::state() accepted stream > max_safe_cursor");
+
+    for (const Json& bad_state_json : {
+             Json{{"seedHex", "abcd"}, {"stream", 0}, {"wordPos", 0}},
+             Json{{"seedHex", std::string(64U, 'A')}, {"stream", 0}, {"wordPos", 0}},
+             Json{{"seedHex", valid_seed}, {"stream", randseed::max_safe_cursor + 1ULL}, {"wordPos", 0}},
+             Json{{"seedHex", valid_seed}, {"stream", 0}, {"wordPos", randseed::max_safe_cursor + 1ULL}},
+             Json{{"seedHex", valid_seed}, {"stream", 0}, {"wordPos", 0}, {"extra", 1}}}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(bad_state_json.get<randseed::ChaCha20State>());
+        } catch (const randseed::ValidationError&) {
+            rejected = true;
+        }
+        require(rejected, "invalid ChaCha20State JSON was accepted");
+    }
+
+    auto overflow_rng = randseed::ChaCha20Rng::from_seed_hex(
+        valid_seed, 0ULL, std::numeric_limits<std::uint64_t>::max());
+    bool caught_overflow = false;
+    try {
+        static_cast<void>(overflow_rng.next_u32());
+    } catch (const std::overflow_error&) {
+        caught_overflow = true;
+    }
+    require(caught_overflow, "ChaCha20Rng::next_u32 did not throw on u64 overflow");
+
+    for (const auto& vector : fixture.at("deriveSeedVectors")) {
+        const auto root_hex = vector.at("rootSeedHex").get<std::string>();
+        std::vector<std::string> domain_storage =
+            vector.at("domains").get<std::vector<std::string>>();
+        std::vector<std::string_view> domains;
+        domains.reserve(domain_storage.size());
+        for (const auto& item : domain_storage) {
+            domains.emplace_back(item);
+        }
+        const auto derived_hex = randseed::derive_seed_hex(root_hex, domains);
+        require(
+            derived_hex == vector.at("derivedSeedHex").get<std::string>(),
+            "derive_seed_hex differs from fixture");
+        auto derived_rng = randseed::ChaCha20Rng::from_seed_hex(derived_hex);
+        require(
+            derived_rng.next_u32() == vector.at("firstU32").get<std::uint32_t>(),
+            "derive_seed_hex firstU32 differs from fixture");
+    }
 }
 
 httplib::Result post_json(
@@ -397,6 +502,26 @@ void test_http_lifecycle(const Json& fixture) {
     expect_bad_request("/init", invalid_match_seq);
     invalid_match_seq["matchSeq"] = max_safe_integer + 1;
     expect_bad_request("/init", invalid_match_seq);
+
+    Json valid_random_seed_cfg = fixture.at("config");
+    valid_random_seed_cfg["options"]["randomSeed"] =
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    valid_random_seed_cfg["options"]["randomSeedIndex"] = 0;
+    require(
+        require_response(post_json(client, "/init", valid_random_seed_cfg), 200) ==
+            fixture.at("initResponse"),
+        "valid randomSeed and randomSeedIndex were rejected");
+
+    for (const Json& bad_opts : {
+             Json{{"randomSeed", nullptr}},
+             Json{{"randomSeed", "ABCD"}},
+             Json{{"randomSeedIndex", -1}},
+             Json{{"randomSeedIndex", 1.5}},
+             Json{{"randomSeedIndex", max_safe_integer + 1}}}) {
+        Json bad_cfg = fixture.at("config");
+        bad_cfg["options"] = bad_opts;
+        expect_bad_request("/init", bad_cfg);
+    }
 
     Json bounded_tick = fixture.at("tickRequest");
     bounded_tick["ctx"]["tick"] = max_safe_integer;

@@ -2,7 +2,8 @@
 
 The `roomhost` package implements the RandSeed room-host v1 HTTP/JSON
 protocol. It provides typed lifecycle requests and responses, an HTTP handler,
-a default-port server runner, and the deterministic Mulberry32 generator.
+a default-port server runner, and deterministic `ChaCha20Rng` / `DeriveSeed`
+(plus legacy `Mulberry32`) generators.
 
 ## Install
 
@@ -67,8 +68,12 @@ The Go host checks event shape and limits, not the room's authenticated match,
 roster, durable delivery, or archive idempotency. Keep event IDs stable across
 retries and use append-only correction events.
 
-`roomhost.NewMulberry32` provides the protocol's deterministic simulation
-generator. It is not cryptographic and is not GameVRF. See the
+`roomhost.NewChaCha20RngFromHex`, `roomhost.NewChaCha20RngDerived`, and
+`roomhost.DeriveSeed` provide deterministic 20-round ChaCha20 simulation
+randomness seeded from the host-injected 256-bit VRF root seed
+(`options.randomSeed`), with validated JSON-safe `ChaCha20State` cursor
+snapshots (`State()` / `NewChaCha20RngFromState`). `roomhost.NewMulberry32`
+remains available for legacy `options.seed` compatibility. See the
 [room-host v1 protocol](../protocol/room-host-v1.md).
 
 ## Verify
