@@ -1655,20 +1655,47 @@ async fn init_route_validates_random_seed_and_random_seed_index_options() {
             })
         }
 
-        async fn tick(&self, _ctx: TickContext, state: serde_json::Value) -> Result<TickResult, SdkError> {
-            Ok(TickResult { state, persist: false, ..Default::default() })
+        async fn tick(
+            &self,
+            _ctx: TickContext,
+            state: serde_json::Value,
+        ) -> Result<TickResult, SdkError> {
+            Ok(TickResult {
+                state,
+                persist: false,
+                ..Default::default()
+            })
         }
 
-        async fn on_player_join(&self, _player_id: String, state: serde_json::Value) -> Result<PlayerEventResult, SdkError> {
-            Ok(PlayerEventResult { state, ..Default::default() })
+        async fn on_player_join(
+            &self,
+            _player_id: String,
+            state: serde_json::Value,
+        ) -> Result<PlayerEventResult, SdkError> {
+            Ok(PlayerEventResult {
+                state,
+                ..Default::default()
+            })
         }
 
-        async fn on_player_leave(&self, _player_id: String, state: serde_json::Value) -> Result<PlayerEventResult, SdkError> {
-            Ok(PlayerEventResult { state, ..Default::default() })
+        async fn on_player_leave(
+            &self,
+            _player_id: String,
+            state: serde_json::Value,
+        ) -> Result<PlayerEventResult, SdkError> {
+            Ok(PlayerEventResult {
+                state,
+                ..Default::default()
+            })
         }
 
         async fn is_game_over(&self, _state: serde_json::Value) -> Result<GameResult, SdkError> {
-            Ok(GameResult { over: false, summary: None, next_match_policy: None, result_units: None })
+            Ok(GameResult {
+                over: false,
+                summary: None,
+                next_match_policy: None,
+                result_units: None,
+            })
         }
     }
 
