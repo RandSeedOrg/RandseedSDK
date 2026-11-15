@@ -2,22 +2,143 @@ using System.Buffers.Binary;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Randseed.GameServerSdk;
 
+[JsonConverter(typeof(ChaCha20StateJsonConverter))]
 public sealed record ChaCha20State(
     [property: JsonPropertyName("seedHex")] string SeedHex,
     [property: JsonPropertyName("stream")] ulong Stream,
-    [property: JsonPropertyName("wordPos")] ulong WordPos);
+    [property: JsonPropertyName("wordPos")] ulong WordPos)
+{
+    public void Validate()
+    {
+        if (!ChaCha20Rng.IsValidSeedHex(SeedHex))
+        {
+            throw new ArgumentException("ChaCha20State.seedHex must be a 64-character lowercase hex string.", nameof(SeedHex));
+        }
+
+        if (Stream > ChaCha20Rng.MaxSafeCursor || WordPos > ChaCha20Rng.MaxSafeCursor)
+        {
+            throw new ArgumentOutOfRangeException(
+                Stream > ChaCha20Rng.MaxSafeCursor ? nameof(Stream) : nameof(WordPos),
+                "ChaCha20State stream and wordPos must be safe integers.");
+        }
+    }
+}
+
+public sealed class ChaCha20StateJsonConverter : JsonConverter<ChaCha20State>
+{
+    public override ChaCha20State Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new JsonException("ChaCha20State must be a JSON object.");
+        }
+
+        string? seedHex = null;
+        ulong stream = 0;
+        ulong wordPos = 0;
+        var hasSeedHex = false;
+        var hasStream = false;
+        var hasWordPos = false;
+
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                if (!hasSeedHex || !hasStream || !hasWordPos)
+                {
+                    throw new JsonException("ChaCha20State requires seedHex, stream, and wordPos.");
+                }
+
+                return new ChaCha20State(seedHex!, stream, wordPos);
+            }
+
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                throw new JsonException("Expected a JSON property name in ChaCha20State.");
+            }
+
+            var propertyName = reader.GetString();
+            if (!reader.Read())
+            {
+                throw new JsonException("Unexpected end of JSON in ChaCha20State.");
+            }
+
+            switch (propertyName)
+            {
+                case "seedHex":
+                    if (hasSeedHex || reader.TokenType != JsonTokenType.String)
+                    {
+                        throw new JsonException("ChaCha20State.seedHex must be a string.");
+                    }
+
+                    seedHex = reader.GetString()!;
+                    if (!ChaCha20Rng.IsValidSeedHex(seedHex))
+                    {
+                        throw new JsonException("ChaCha20State.seedHex must be a 64-character lowercase hex string.");
+                    }
+
+                    hasSeedHex = true;
+                    break;
+                case "stream":
+                    if (hasStream ||
+                        reader.TokenType != JsonTokenType.Number ||
+                        !reader.TryGetUInt64(out stream) ||
+                        stream > ChaCha20Rng.MaxSafeCursor)
+                    {
+                        throw new JsonException("ChaCha20State.stream must be a non-negative safe integer.");
+                    }
+
+                    hasStream = true;
+                    break;
+                case "wordPos":
+                    if (hasWordPos ||
+                        reader.TokenType != JsonTokenType.Number ||
+                        !reader.TryGetUInt64(out wordPos) ||
+                        wordPos > ChaCha20Rng.MaxSafeCursor)
+                    {
+                        throw new JsonException("ChaCha20State.wordPos must be a non-negative safe integer.");
+                    }
+
+                    hasWordPos = true;
+                    break;
+                default:
+                    throw new JsonException($"Unsupported ChaCha20State property '{propertyName}'.");
+            }
+        }
+
+        throw new JsonException("Unexpected end of JSON in ChaCha20State.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, ChaCha20State value, JsonSerializerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (!ChaCha20Rng.IsValidSeedHex(value.SeedHex) ||
+            value.Stream > ChaCha20Rng.MaxSafeCursor ||
+            value.WordPos > ChaCha20Rng.MaxSafeCursor)
+        {
+            throw new JsonException("ChaCha20State contains an invalid seedHex or unsafe integer cursor.");
+        }
+
+        writer.WriteStartObject();
+        writer.WriteString("seedHex", value.SeedHex);
+        writer.WriteNumber("stream", value.Stream);
+        writer.WriteNumber("wordPos", value.WordPos);
+        writer.WriteEndObject();
+    }
+}
 
 public sealed class ChaCha20Rng
 {
     public const int RandomSeedBytes = 32;
     public const int RandomSeedHexLength = 64;
+    public const ulong MaxSafeCursor = 9_007_199_254_740_991UL;
     public const string DeriveSeedDomainPrefix = "randseed-chacha20-derive-v1\0";
 
-    private const ulong MaxSafeInteger = 9_007_199_254_740_991UL;
     private const ulong TwoPow32 = 1UL << 32;
 
     private static readonly uint[] Constants =
@@ -62,17 +183,13 @@ public sealed class ChaCha20Rng
     public static ChaCha20Rng FromState(ChaCha20State state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (state.Stream > MaxSafeInteger || state.WordPos > MaxSafeInteger)
-        {
-            throw new ArgumentOutOfRangeException(nameof(state), "ChaCha20State stream and wordPos must be safe integers.");
-        }
-
+        state.Validate();
         return FromHex(state.SeedHex, state.Stream, state.WordPos);
     }
 
     public ChaCha20State GetState()
     {
-        if (_stream > MaxSafeInteger || _wordPos > MaxSafeInteger)
+        if (_stream > MaxSafeCursor || _wordPos > MaxSafeCursor)
         {
             throw new InvalidOperationException("ChaCha20Rng cursor exceeds JSON safe integer bounds.");
         }
@@ -103,6 +220,7 @@ public sealed class ChaCha20Rng
 
     public uint NextUInt32()
     {
+        var nextWordPos = checked(_wordPos + 1UL);
         var blockIndex = _wordPos >> 4;
         var wordOffset = (int)(_wordPos & 15UL);
         if (!_hasCachedBlock || _cachedBlockIndex != blockIndex)
@@ -112,7 +230,7 @@ public sealed class ChaCha20Rng
             _hasCachedBlock = true;
         }
 
-        _wordPos = checked(_wordPos + 1UL);
+        _wordPos = nextWordPos;
         return _cachedBlock[wordOffset];
     }
 

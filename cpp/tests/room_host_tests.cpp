@@ -284,7 +284,72 @@ void test_prng_vectors(const Json& fixture) {
                 bounded_rng.next_bounded(100U) == expected.get<std::uint32_t>(),
                 "ChaCha20Rng next_bounded(100) differs from fixture");
         }
+
+        const auto mid_state = bounded_rng.state();
+        const Json encoded_state(mid_state);
+        const auto decoded_state = encoded_state.get<randseed::ChaCha20State>();
+        require(decoded_state == mid_state, "ChaCha20State JSON round-trip mismatch");
+        auto restored_rng = randseed::ChaCha20Rng::from_state(decoded_state);
+        require(
+            restored_rng.next_u32() == bounded_rng.next_u32(),
+            "ChaCha20Rng restored from JSON state differs");
     }
+
+    const std::string valid_seed(64U, '1');
+    auto max_cursor_rng = randseed::ChaCha20Rng::from_seed_hex(
+        valid_seed, randseed::max_safe_cursor, randseed::max_safe_cursor);
+    const auto max_state = max_cursor_rng.state();
+    require(
+        Json(max_state).get<randseed::ChaCha20State>() == max_state,
+        "max_safe_cursor ChaCha20State failed JSON round-trip");
+
+    static_cast<void>(max_cursor_rng.next_u32());
+    bool rejected_unsafe_word_pos = false;
+    try {
+        static_cast<void>(max_cursor_rng.state());
+    } catch (const std::invalid_argument&) {
+        rejected_unsafe_word_pos = true;
+    }
+    require(
+        rejected_unsafe_word_pos,
+        "ChaCha20Rng::state() accepted word_pos > max_safe_cursor");
+
+    auto unsafe_stream_rng = randseed::ChaCha20Rng::from_seed_hex(
+        valid_seed, randseed::max_safe_cursor + 1ULL, 0ULL);
+    bool rejected_unsafe_stream = false;
+    try {
+        static_cast<void>(unsafe_stream_rng.state());
+    } catch (const std::invalid_argument&) {
+        rejected_unsafe_stream = true;
+    }
+    require(
+        rejected_unsafe_stream,
+        "ChaCha20Rng::state() accepted stream > max_safe_cursor");
+
+    for (const Json& bad_state_json : {
+             Json{{"seedHex", "abcd"}, {"stream", 0}, {"wordPos", 0}},
+             Json{{"seedHex", std::string(64U, 'A')}, {"stream", 0}, {"wordPos", 0}},
+             Json{{"seedHex", valid_seed}, {"stream", randseed::max_safe_cursor + 1ULL}, {"wordPos", 0}},
+             Json{{"seedHex", valid_seed}, {"stream", 0}, {"wordPos", randseed::max_safe_cursor + 1ULL}},
+             Json{{"seedHex", valid_seed}, {"stream", 0}, {"wordPos", 0}, {"extra", 1}}}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(bad_state_json.get<randseed::ChaCha20State>());
+        } catch (const randseed::ValidationError&) {
+            rejected = true;
+        }
+        require(rejected, "invalid ChaCha20State JSON was accepted");
+    }
+
+    auto overflow_rng = randseed::ChaCha20Rng::from_seed_hex(
+        valid_seed, 0ULL, std::numeric_limits<std::uint64_t>::max());
+    bool caught_overflow = false;
+    try {
+        static_cast<void>(overflow_rng.next_u32());
+    } catch (const std::overflow_error&) {
+        caught_overflow = true;
+    }
+    require(caught_overflow, "ChaCha20Rng::next_u32 did not throw on u64 overflow");
 
     for (const auto& vector : fixture.at("deriveSeedVectors")) {
         const auto root_hex = vector.at("rootSeedHex").get<std::string>();

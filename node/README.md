@@ -147,8 +147,12 @@ project's `package.json`, or use an `.mjs` entry point.
   platform-supplied metadata, not authorization evidence; validate ownership
   and permissions independently before protected operations. Game servers must
   not use client-submitted names or avatars as authenticated data.
-- `mulberry32` and `mulberry32U32` provide deterministic, non-cryptographic
-  random number generation.
+- `ChaCha20Rng`, `deriveSeed`, and `deriveSeedHex` provide deterministic 20-round
+  ChaCha20 simulation randomness (matching `rand_chacha::ChaCha20Rng`) seeded
+  from the host-injected 256-bit VRF root seed (`options.randomSeed`), with
+  JSON-safe `{ seedHex, stream, wordPos }` cursor snapshots via `getState()` /
+  `ChaCha20Rng.fromState()`. `mulberry32` and `mulberry32U32` remain available
+  for legacy `options.seed` compatibility.
 - Replay helpers validate, execute, and prepare replay data for storage tiers.
 - Agent capability and player-specific observation helpers are opt-in.
 - Authoritative Agent player-view contracts and host-only projection endpoints
@@ -158,7 +162,8 @@ project's `package.json`, or use an `.mjs` entry point.
 
 See the [protocol contract](../protocol/room-host-v1.md) and shared
 [compatibility fixture](../protocol/fixtures/room-host-v1.json) for the exact
-wire format. The SDK does not provide payment APIs or a GameVRF client.
+wire format. The SDK does not provide payment APIs or a direct VRF canister
+client (the trusted room host injects `options.randomSeed` at match init).
 
 For an existing browser game migration, see the paired
 [Node/Rust migration guide](../protocol/ai-multiplayer-migration.md) and

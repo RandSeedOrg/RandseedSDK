@@ -267,6 +267,26 @@ func TestChaCha20AndDeriveSeedMatchEverySharedVector(t *testing.T) {
 					t.Fatalf("bounded100[%d] = %d, want %d", index, got, want)
 				}
 			}
+
+			midState, err := boundedGen.State()
+			if err != nil {
+				t.Fatalf("boundedGen.State: %v", err)
+			}
+			encodedState, err := json.Marshal(midState)
+			if err != nil {
+				t.Fatalf("json.Marshal(ChaCha20State): %v", err)
+			}
+			var decodedState ChaCha20State
+			if err := json.Unmarshal(encodedState, &decodedState); err != nil {
+				t.Fatalf("json.Unmarshal(ChaCha20State): %v", err)
+			}
+			restored, err := NewChaCha20RngFromState(decodedState)
+			if err != nil {
+				t.Fatalf("NewChaCha20RngFromState(decodedState): %v", err)
+			}
+			if got, want := restored.NextU32(), boundedGen.NextU32(); got != want {
+				t.Fatalf("restored NextU32 = %d, want %d", got, want)
+			}
 		})
 	}
 
@@ -287,6 +307,99 @@ func TestChaCha20AndDeriveSeedMatchEverySharedVector(t *testing.T) {
 				t.Fatalf("firstU32 = %d, want %d", got, vector.FirstU32)
 			}
 		})
+	}
+}
+
+func TestChaCha20StateSafeCursorAndJSONValidation(t *testing.T) {
+	validSeed := strings.Repeat("11", RandomSeedBytes)
+	rng, err := NewChaCha20RngFromHex(validSeed)
+	if err != nil {
+		t.Fatalf("NewChaCha20RngFromHex: %v", err)
+	}
+	rng.SetStream(MaxSafeCursor)
+	rng.SetWordPos(MaxSafeCursor)
+	maxState, err := rng.State()
+	if err != nil {
+		t.Fatalf("State() at MaxSafeCursor failed: %v", err)
+	}
+	raw, err := json.Marshal(maxState)
+	if err != nil {
+		t.Fatalf("json.Marshal at MaxSafeCursor failed: %v", err)
+	}
+	var roundTripped ChaCha20State
+	if err := json.Unmarshal(raw, &roundTripped); err != nil {
+		t.Fatalf("json.Unmarshal at MaxSafeCursor failed: %v", err)
+	}
+	if roundTripped != maxState {
+		t.Fatalf("roundTripped = %+v, want %+v", roundTripped, maxState)
+	}
+
+	// Advancing one word past MaxSafeCursor works in memory,
+	// but State() and json.Marshal reject unsafe JSON cursors.
+	_ = rng.NextU32()
+	if _, err := rng.State(); err == nil {
+		t.Fatal("expected State() error when wordPos exceeds MaxSafeCursor")
+	}
+
+	streamOverflowRng, err := NewChaCha20RngFromHex(validSeed)
+	if err != nil {
+		t.Fatalf("NewChaCha20RngFromHex: %v", err)
+	}
+	streamOverflowRng.SetStream(MaxSafeCursor + 1)
+	if _, err := streamOverflowRng.State(); err == nil {
+		t.Fatal("expected State() error when stream exceeds MaxSafeCursor")
+	}
+
+	invalidStates := []ChaCha20State{
+		{SeedHex: "abcd", Stream: 0, WordPos: 0},
+		{SeedHex: strings.ToUpper(validSeed), Stream: 0, WordPos: 0},
+		{SeedHex: validSeed, Stream: MaxSafeCursor + 1, WordPos: 0},
+		{SeedHex: validSeed, Stream: 0, WordPos: MaxSafeCursor + 1},
+	}
+	for _, invalid := range invalidStates {
+		if _, err := json.Marshal(invalid); err == nil {
+			t.Fatalf("expected json.Marshal error for %+v", invalid)
+		}
+		if _, err := NewChaCha20RngFromState(invalid); err == nil {
+			t.Fatalf("expected NewChaCha20RngFromState error for %+v", invalid)
+		}
+	}
+
+	invalidPayloads := []string{
+		`null`,
+		`[]`,
+		`{"seedHex":"` + validSeed + `","stream":0}`,
+		`{"seedHex":"` + validSeed + `","stream":0,"wordPos":0,"extra":1}`,
+		`{"seedHex":"` + strings.ToUpper(validSeed) + `","stream":0,"wordPos":0}`,
+		`{"seedHex":"` + validSeed + `","stream":-1,"wordPos":0}`,
+		`{"seedHex":"` + validSeed + `","stream":1.5,"wordPos":0}`,
+		`{"seedHex":"` + validSeed + `","stream":9007199254740992,"wordPos":0}`,
+		`{"seedHex":"` + validSeed + `","stream":0,"wordPos":9007199254740992}`,
+		`{"seedHex":"` + validSeed + `","stream":null,"wordPos":0}`,
+	}
+	for _, payload := range invalidPayloads {
+		var target ChaCha20State
+		if err := json.Unmarshal([]byte(payload), &target); err == nil {
+			t.Fatalf("expected json.Unmarshal error for %s", payload)
+		}
+	}
+
+	overflowRng, err := NewChaCha20RngFromHex(validSeed)
+	if err != nil {
+		t.Fatalf("NewChaCha20RngFromHex: %v", err)
+	}
+	overflowRng.SetWordPos(^uint64(0))
+	didPanic := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				didPanic = true
+			}
+		}()
+		_ = overflowRng.NextU32()
+	}()
+	if !didPanic {
+		t.Fatal("expected NextU32 to panic on uint64 wordPos overflow")
 	}
 }
 

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -13,6 +14,7 @@ namespace randseed {
 
 inline constexpr std::size_t random_seed_bytes = 32U;
 inline constexpr std::size_t random_seed_hex_len = 64U;
+inline constexpr std::uint64_t max_safe_cursor = 9007199254740991ULL;
 inline constexpr std::string_view derive_seed_domain_prefix{
     "randseed-chacha20-derive-v1\0", 28U};
 
@@ -22,6 +24,10 @@ struct ChaCha20State {
     std::string seed_hex;
     std::uint64_t stream{0};
     std::uint64_t word_pos{0};
+
+    friend bool operator==(
+        const ChaCha20State&,
+        const ChaCha20State&) = default;
 };
 
 [[nodiscard]] inline bool is_valid_seed_hex(std::string_view value) noexcept {
@@ -35,6 +41,21 @@ struct ChaCha20State {
         }
     }
     return true;
+}
+
+inline void validate_chacha20_state(const ChaCha20State& state) {
+    if (!is_valid_seed_hex(state.seed_hex)) {
+        throw std::invalid_argument(
+            "ChaCha20State.seedHex must be a 64-character lowercase hex string");
+    }
+    if (state.stream > max_safe_cursor) {
+        throw std::invalid_argument(
+            "ChaCha20State.stream must be a non-negative safe integer");
+    }
+    if (state.word_pos > max_safe_cursor) {
+        throw std::invalid_argument(
+            "ChaCha20State.wordPos must be a non-negative safe integer");
+    }
 }
 
 namespace detail {
@@ -376,20 +397,17 @@ public:
     }
 
     [[nodiscard]] static ChaCha20Rng from_state(const ChaCha20State& state) {
-        constexpr std::uint64_t max_safe_integer = 9007199254740991ULL;
-        if (state.stream > max_safe_integer ||
-            state.word_pos > max_safe_integer) {
-            throw std::invalid_argument(
-                "ChaCha20State stream and wordPos must be safe integers");
-        }
+        validate_chacha20_state(state);
         return from_seed_hex(state.seed_hex, state.stream, state.word_pos);
     }
 
     [[nodiscard]] ChaCha20State state() const {
-        return ChaCha20State{
+        ChaCha20State snapshot{
             .seed_hex = encode_seed_hex(seed_),
             .stream = stream_,
             .word_pos = word_pos_};
+        validate_chacha20_state(snapshot);
+        return snapshot;
     }
 
     void set_stream(std::uint64_t stream) noexcept {
@@ -411,7 +429,10 @@ public:
         return word_pos_;
     }
 
-    [[nodiscard]] std::uint32_t next_u32() noexcept {
+    [[nodiscard]] std::uint32_t next_u32() {
+        if (word_pos_ == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::overflow_error("ChaCha20Rng word_pos overflow");
+        }
         const std::uint64_t block_index = word_pos_ >> 4U;
         const auto word_offset = static_cast<std::size_t>(word_pos_ & 15ULL);
         if (!has_cached_block_ || cached_block_index_ != block_index) {
@@ -424,13 +445,13 @@ public:
         return cached_block_[word_offset];
     }
 
-    [[nodiscard]] std::uint64_t next_u64() noexcept {
+    [[nodiscard]] std::uint64_t next_u64() {
         const auto lo = static_cast<std::uint64_t>(next_u32());
         const auto hi = static_cast<std::uint64_t>(next_u32());
         return lo | (hi << 32U);
     }
 
-    [[nodiscard]] double next_float() noexcept {
+    [[nodiscard]] double next_float() {
         return static_cast<double>(next_u32()) / 4294967296.0;
     }
 

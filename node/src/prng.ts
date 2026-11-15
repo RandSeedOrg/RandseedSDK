@@ -1,8 +1,10 @@
 export const RANDOM_SEED_BYTES = 32;
 export const RANDOM_SEED_HEX_LEN = 64;
+export const MAX_SAFE_CURSOR = Number.MAX_SAFE_INTEGER;
 export const DERIVE_SEED_DOMAIN_PREFIX = "randseed-chacha20-derive-v1\0";
 
-const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MAX_SAFE_BIGINT = BigInt(MAX_SAFE_CURSOR);
+const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 const MASK_32 = 0xffff_ffffn;
 const TWO_POW_32 = 0x1_0000_0000n;
 const UINT32_SCALE = 4294967296;
@@ -85,7 +87,7 @@ function normalizeSeedBytes(seed: Uint8Array | string): Uint8Array {
 
 function normalizeU64(value: number | bigint, label: string): bigint {
   if (typeof value === "bigint") {
-    if (value < 0n || value > 0xffff_ffff_ffff_ffffn) {
+    if (value < 0n || value > MAX_U64) {
       throw new Error(`${label} must be a non-negative 64-bit integer.`);
     }
     return value;
@@ -302,9 +304,19 @@ export class ChaCha20Rng {
   }
 
   static fromState(state: ChaCha20State): ChaCha20Rng {
+    if (typeof state !== "object" || state === null || Array.isArray(state)) {
+      throw new Error("Invalid ChaCha20State.");
+    }
+    const proto = Object.getPrototypeOf(state);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error("Invalid ChaCha20State.");
+    }
+    for (const key of Object.keys(state)) {
+      if (key !== "seedHex" && key !== "stream" && key !== "wordPos") {
+        throw new Error(`Invalid ChaCha20State: unsupported field "${key}".`);
+      }
+    }
     if (
-      typeof state !== "object" ||
-      state === null ||
       !isValidSeedHex(state.seedHex) ||
       !Number.isSafeInteger(state.stream) ||
       state.stream < 0 ||
@@ -335,11 +347,29 @@ export class ChaCha20Rng {
   }
 
   get stream(): number {
+    if (this.streamId > MAX_SAFE_BIGINT) {
+      throw new RangeError(
+        "ChaCha20Rng stream exceeds Number.MAX_SAFE_INTEGER; read streamBigInt instead.",
+      );
+    }
     return Number(this.streamId);
   }
 
+  get streamBigInt(): bigint {
+    return this.streamId;
+  }
+
   get wordPos(): number {
+    if (this.wordPosition > MAX_SAFE_BIGINT) {
+      throw new RangeError(
+        "ChaCha20Rng wordPos exceeds Number.MAX_SAFE_INTEGER; read wordPosBigInt instead.",
+      );
+    }
     return Number(this.wordPosition);
+  }
+
+  get wordPosBigInt(): bigint {
+    return this.wordPosition;
   }
 
   setStream(stream: number | bigint): void {
@@ -356,6 +386,9 @@ export class ChaCha20Rng {
   }
 
   nextU32(): number {
+    if (this.wordPosition === MAX_U64) {
+      throw new RangeError("ChaCha20Rng wordPos overflow.");
+    }
     const blockIndex = this.wordPosition >> 4n;
     const wordOffset = Number(this.wordPosition & 15n);
     if (this.cachedBlockIndex !== blockIndex || this.cachedBlock === null) {

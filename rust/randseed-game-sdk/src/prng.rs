@@ -20,7 +20,9 @@ pub const RANDOM_SEED_HEX_LEN: usize = 64;
 /// Domain-separation prefix used by [`derive_seed`].
 pub const DERIVE_SEED_DOMAIN_PREFIX: &[u8] = b"randseed-chacha20-derive-v1\0";
 
-const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+/// Maximum JSON-safe cursor value (`2^53 - 1`) for [`ChaCha20State::stream`] and [`ChaCha20State::word_pos`].
+pub const MAX_SAFE_CURSOR: u64 = 9_007_199_254_740_991;
+
 const CHACHA20_CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 const TWO_POW_32: u64 = 0x1_0000_0000;
 
@@ -131,8 +133,7 @@ pub fn derive_seed_hex(root_seed_hex: &str, domains: &[&str]) -> Result<String, 
 }
 
 /// Serializable cursor snapshot for [`ChaCha20Rng`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChaCha20State {
     /// Canonical 64-character lowercase hex representation of the 32-byte key.
     pub seed_hex: String,
@@ -140,6 +141,53 @@ pub struct ChaCha20State {
     pub stream: u64,
     /// Number of 32-bit words already consumed from this `(seed, stream)` sequence.
     pub word_pos: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChaCha20StateRef<'a> {
+    seed_hex: &'a str,
+    stream: u64,
+    word_pos: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawChaCha20State {
+    seed_hex: String,
+    stream: u64,
+    word_pos: u64,
+}
+
+impl Serialize for ChaCha20State {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.validate().map_err(serde::ser::Error::custom)?;
+        ChaCha20StateRef {
+            seed_hex: &self.seed_hex,
+            stream: self.stream,
+            word_pos: self.word_pos,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ChaCha20State {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawChaCha20State::deserialize(deserializer)?;
+        let state = Self {
+            seed_hex: raw.seed_hex,
+            stream: raw.stream,
+            word_pos: raw.word_pos,
+        };
+        state.validate().map_err(serde::de::Error::custom)?;
+        Ok(state)
+    }
 }
 
 impl ChaCha20State {
@@ -150,12 +198,12 @@ impl ChaCha20State {
                 "ChaCha20State.seedHex must be a 64-character lowercase hex string.".into(),
             ));
         }
-        if self.stream > MAX_SAFE_INTEGER {
+        if self.stream > MAX_SAFE_CURSOR {
             return Err(SdkError::Validation(
                 "ChaCha20State.stream must be a non-negative safe integer.".into(),
             ));
         }
-        if self.word_pos > MAX_SAFE_INTEGER {
+        if self.word_pos > MAX_SAFE_CURSOR {
             return Err(SdkError::Validation(
                 "ChaCha20State.wordPos must be a non-negative safe integer.".into(),
             ));
@@ -232,13 +280,18 @@ impl ChaCha20Rng {
         Ok(rng)
     }
 
-    /// Export a serializable [`ChaCha20State`] cursor snapshot.
-    pub fn state(&self) -> ChaCha20State {
-        ChaCha20State {
+    /// Export a validated serializable [`ChaCha20State`] cursor snapshot.
+    ///
+    /// Returns [`SdkError::Validation`] if `stream` or `word_pos` exceeds [`MAX_SAFE_CURSOR`]
+    /// (`2^53 - 1`), which would lose precision when persisted through IEEE-754 JSON runtimes.
+    pub fn state(&self) -> Result<ChaCha20State, SdkError> {
+        let state = ChaCha20State {
             seed_hex: self.seed_hex(),
             stream: self.stream,
             word_pos: self.word_pos,
-        }
+        };
+        state.validate()?;
+        Ok(state)
     }
 
     /// Return a copy of this generator configured with the given 64-bit `stream` ID.
@@ -247,9 +300,10 @@ impl ChaCha20Rng {
         self
     }
 
-    /// Set the 64-bit ChaCha20 stream ID and reset `word_pos` to `0`? No: preserves `word_pos`
-    /// unless caller calls `set_word_pos(0)`. Note: `rand_chacha::set_stream` resets/keeps block pos;
-    /// we invalidate block cache so subsequent reads use the new stream at current `word_pos`.
+    /// Set the 64-bit ChaCha20 stream ID while preserving the current `word_pos` cursor.
+    ///
+    /// Invalidates any cached block so subsequent reads draw from the new stream at the
+    /// current `word_pos` (call [`Self::set_word_pos`] with `0` if you also want to rewind).
     pub fn set_stream(&mut self, stream: u64) {
         if self.stream != stream {
             self.stream = stream;
@@ -284,16 +338,17 @@ impl ChaCha20Rng {
 
     /// Generate the next unsigned 32-bit integer and advance `word_pos` by 1.
     pub fn next_u32(&mut self) -> u32 {
+        let next_word_pos = self
+            .word_pos
+            .checked_add(1)
+            .expect("ChaCha20Rng word_pos overflow");
         let block_index = self.word_pos >> 4;
         let word_offset = (self.word_pos & 15) as usize;
         if self.cached_block_index != Some(block_index) {
             self.cached_block = chacha20_block(&self.key_words, block_index, self.stream);
             self.cached_block_index = Some(block_index);
         }
-        self.word_pos = self
-            .word_pos
-            .checked_add(1)
-            .expect("ChaCha20Rng word_pos overflow");
+        self.word_pos = next_word_pos;
         self.cached_block[word_offset]
     }
 
@@ -741,7 +796,7 @@ mod tests {
             for _ in 0..23 {
                 let _ = seek_rng.next_u32();
             }
-            let snap = seek_rng.state();
+            let snap = seek_rng.state().unwrap();
             let mut restored = ChaCha20Rng::from_state(&snap).unwrap();
             for _ in 0..40 {
                 assert_eq!(seek_rng.next_u32(), restored.next_u32());
@@ -758,5 +813,72 @@ mod tests {
         let single_empty = derive_seed_strs(&root, &[""]);
         assert_ne!(a, b);
         assert_ne!(empty, single_empty);
+    }
+
+    #[test]
+    fn state_and_serde_enforce_safe_integer_cursor_and_seed_hex_bounds() {
+        let mut rng = ChaCha20Rng::from_seed([0x11u8; 32]).with_stream(MAX_SAFE_CURSOR);
+        rng.set_word_pos(MAX_SAFE_CURSOR);
+        let max_state = rng.state().unwrap();
+        let encoded = serde_json::to_value(&max_state).unwrap();
+        let decoded: ChaCha20State = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, max_state);
+        assert_eq!(ChaCha20Rng::from_state(&decoded).unwrap(), rng);
+
+        // Advancing one word past MAX_SAFE_CURSOR still works in-memory,
+        // but state() and JSON serialization refuse to export unsafe cursors.
+        let _ = rng.next_u32();
+        assert_eq!(rng.word_pos(), MAX_SAFE_CURSOR + 1);
+        assert!(rng.state().is_err());
+
+        let unsafe_stream_rng =
+            ChaCha20Rng::from_seed([0x22u8; 32]).with_stream(MAX_SAFE_CURSOR + 1);
+        assert!(unsafe_stream_rng.state().is_err());
+
+        for invalid_state in [
+            ChaCha20State {
+                seed_hex: "ABCD".into(),
+                stream: 0,
+                word_pos: 0,
+            },
+            ChaCha20State {
+                seed_hex: "AA".repeat(32),
+                stream: 0,
+                word_pos: 0,
+            },
+            ChaCha20State {
+                seed_hex: "11".repeat(32),
+                stream: MAX_SAFE_CURSOR + 1,
+                word_pos: 0,
+            },
+            ChaCha20State {
+                seed_hex: "11".repeat(32),
+                stream: 0,
+                word_pos: MAX_SAFE_CURSOR + 1,
+            },
+        ] {
+            assert!(serde_json::to_value(&invalid_state).is_err());
+        }
+
+        for invalid_json in [
+            serde_json::json!({ "seedHex": "11".repeat(31), "stream": 0, "wordPos": 0 }),
+            serde_json::json!({ "seedHex": "AA".repeat(32), "stream": 0, "wordPos": 0 }),
+            serde_json::json!({ "seedHex": "11".repeat(32), "stream": MAX_SAFE_CURSOR + 1, "wordPos": 0 }),
+            serde_json::json!({ "seedHex": "11".repeat(32), "stream": 0, "wordPos": MAX_SAFE_CURSOR + 1 }),
+            serde_json::json!({ "seedHex": "11".repeat(32), "stream": 0, "wordPos": 0, "extra": true }),
+        ] {
+            assert!(
+                serde_json::from_value::<ChaCha20State>(invalid_json.clone()).is_err(),
+                "expected invalid ChaCha20State JSON to fail: {invalid_json}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "ChaCha20Rng word_pos overflow")]
+    fn next_u32_panics_on_u64_max_word_pos_overflow() {
+        let mut rng = ChaCha20Rng::from_seed([0x33u8; 32]);
+        rng.set_word_pos(u64::MAX);
+        let _ = rng.next_u32();
     }
 }

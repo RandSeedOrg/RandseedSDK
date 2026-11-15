@@ -1,5 +1,4 @@
 #include "randseed/protocol.hpp"
-#include "randseed/chacha20.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1069,6 +1068,40 @@ CommandRequest parse_command_request(const Json& value) {
     static_cast<void>(require_field(request.command, "data", "command"));
     request.state = require_field(value, "state");
     return request;
+}
+
+ChaCha20State parse_chacha20_state(const Json& value) {
+    reject_unknown_fields(
+        value, {"seedHex", "stream", "wordPos"}, "ChaCha20State");
+    const auto seed_hex = require_string(
+        require_field(value, "seedHex", "ChaCha20State"),
+        "ChaCha20State.seedHex");
+    if (!is_valid_seed_hex(seed_hex)) {
+        throw ValidationError(
+            "ChaCha20State.seedHex must be a 64-character lowercase hex string");
+    }
+    const auto stream = require_nonnegative_integer(
+        require_field(value, "stream", "ChaCha20State"),
+        "ChaCha20State.stream");
+    const auto word_pos = require_nonnegative_integer(
+        require_field(value, "wordPos", "ChaCha20State"),
+        "ChaCha20State.wordPos");
+    return ChaCha20State{
+        .seed_hex = seed_hex,
+        .stream = stream,
+        .word_pos = word_pos};
+}
+
+void to_json(Json& value, const ChaCha20State& state) {
+    validate_chacha20_state(state);
+    value = Json{
+        {"seedHex", state.seed_hex},
+        {"stream", state.stream},
+        {"wordPos", state.word_pos}};
+}
+
+void from_json(const Json& value, ChaCha20State& state) {
+    state = parse_chacha20_state(value);
 }
 
 void to_json(Json& value, const GameManifest& manifest) {

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   ChaCha20Rng,
+  MAX_SAFE_CURSOR,
   createGameServer,
   deriveSeedHex,
   legacySeedFromBytes,
@@ -137,6 +138,45 @@ test("ChaCha20Rng and deriveSeed match every shared protocol vector", () => {
     legacySeedFromBytes("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"),
     0x04030201,
   );
+
+  const validSeed = "11".repeat(32);
+  const maxCursorRng = new ChaCha20Rng(validSeed, {
+    stream: MAX_SAFE_CURSOR,
+    wordPos: MAX_SAFE_CURSOR,
+  });
+  const maxState = maxCursorRng.getState();
+  assert.deepEqual(ChaCha20Rng.fromState(maxState).getState(), maxState);
+  assert.equal(maxCursorRng.stream, MAX_SAFE_CURSOR);
+  assert.equal(maxCursorRng.wordPos, MAX_SAFE_CURSOR);
+
+  maxCursorRng.nextU32();
+  assert.equal(maxCursorRng.wordPosBigInt, BigInt(MAX_SAFE_CURSOR) + 1n);
+  assert.throws(() => maxCursorRng.wordPos, RangeError);
+  assert.throws(() => maxCursorRng.getState(), /safe integer/);
+
+  const bigStreamRng = new ChaCha20Rng(validSeed, {
+    stream: BigInt(MAX_SAFE_CURSOR) + 1n,
+  });
+  assert.equal(bigStreamRng.streamBigInt, BigInt(MAX_SAFE_CURSOR) + 1n);
+  assert.throws(() => bigStreamRng.stream, RangeError);
+  assert.throws(() => bigStreamRng.getState(), /safe integer/);
+
+  for (const badState of [
+    null,
+    [],
+    { seedHex: validSeed, stream: 0 },
+    { seedHex: validSeed, stream: 0, wordPos: 0, extra: true },
+    { seedHex: "AA".repeat(32), stream: 0, wordPos: 0 },
+    { seedHex: validSeed, stream: MAX_SAFE_CURSOR + 1, wordPos: 0 },
+    { seedHex: validSeed, stream: 0, wordPos: MAX_SAFE_CURSOR + 1 },
+  ]) {
+    assert.throws(() => ChaCha20Rng.fromState(badState));
+  }
+
+  const overflowRng = new ChaCha20Rng(validSeed, {
+    wordPos: 0xffff_ffff_ffff_ffffn,
+  });
+  assert.throws(() => overflowRng.nextU32(), RangeError);
 });
 
 test("match options validate randomSeed and randomSeedIndex strictly", async (t) => {

@@ -3,6 +3,7 @@ package roomhost
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -15,6 +16,8 @@ const (
 	RandomSeedHexLen = 64
 	// DeriveSeedDomainPrefix is the SHA-256 domain-separation prefix for DeriveSeed.
 	DeriveSeedDomainPrefix = "randseed-chacha20-derive-v1\x00"
+	// MaxSafeCursor is the maximum JSON-safe integer cursor (2^53 - 1) for ChaCha20State.
+	MaxSafeCursor uint64 = uint64(maxSafeInteger)
 
 	twoPow32 uint64 = 1 << 32
 )
@@ -31,6 +34,79 @@ type ChaCha20State struct {
 	SeedHex string `json:"seedHex"`
 	Stream  uint64 `json:"stream"`
 	WordPos uint64 `json:"wordPos"`
+}
+
+// Validate checks that ChaCha20State uses canonical lowercase hex and safe JSON integer cursors.
+func (s ChaCha20State) Validate() error {
+	if !IsValidSeedHex(s.SeedHex) {
+		return errors.New("ChaCha20State.seedHex must be a 64-character lowercase hex string")
+	}
+	if s.Stream > MaxSafeCursor {
+		return errors.New("ChaCha20State.stream must be a non-negative safe integer")
+	}
+	if s.WordPos > MaxSafeCursor {
+		return errors.New("ChaCha20State.wordPos must be a non-negative safe integer")
+	}
+	return nil
+}
+
+// MarshalJSON validates ChaCha20State before encoding it as JSON.
+func (s ChaCha20State) MarshalJSON() ([]byte, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	type wireChaCha20State struct {
+		SeedHex string `json:"seedHex"`
+		Stream  uint64 `json:"stream"`
+		WordPos uint64 `json:"wordPos"`
+	}
+	return json.Marshal(wireChaCha20State{
+		SeedHex: s.SeedHex,
+		Stream:  s.Stream,
+		WordPos: s.WordPos,
+	})
+}
+
+// UnmarshalJSON strictly decodes and validates a JSON ChaCha20State object.
+func (s *ChaCha20State) UnmarshalJSON(data []byte) error {
+	fields, ok := objectFields(data)
+	if !ok {
+		return errors.New("ChaCha20State must be a JSON object")
+	}
+	rawSeedHex, hasSeedHex := fields["seedHex"]
+	rawStream, hasStream := fields["stream"]
+	rawWordPos, hasWordPos := fields["wordPos"]
+	if !hasSeedHex || !hasStream || !hasWordPos {
+		return errors.New("ChaCha20State requires seedHex, stream, and wordPos")
+	}
+	if len(fields) != 3 {
+		return errors.New("ChaCha20State contains unsupported fields")
+	}
+	if isJSONNull(rawSeedHex) || isJSONNull(rawStream) || isJSONNull(rawWordPos) {
+		return errors.New("ChaCha20State fields must not be null")
+	}
+	var seedHex string
+	if err := decodeStrictJSON(rawSeedHex, &seedHex); err != nil {
+		return fmt.Errorf("ChaCha20State.seedHex: %w", err)
+	}
+	var stream int64
+	if err := decodeStrictJSON(rawStream, &stream); err != nil || stream < 0 {
+		return errors.New("ChaCha20State.stream must be a non-negative safe integer")
+	}
+	var wordPos int64
+	if err := decodeStrictJSON(rawWordPos, &wordPos); err != nil || wordPos < 0 {
+		return errors.New("ChaCha20State.wordPos must be a non-negative safe integer")
+	}
+	candidate := ChaCha20State{
+		SeedHex: seedHex,
+		Stream:  uint64(stream),
+		WordPos: uint64(wordPos),
+	}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	*s = candidate
+	return nil
 }
 
 // IsValidSeedHex reports whether value is a 64-character lowercase ASCII hex string.
@@ -166,8 +242,8 @@ func NewChaCha20RngDerived(rootSeed [RandomSeedBytes]byte, domains ...string) *C
 
 // NewChaCha20RngFromState restores a generator from a serialized ChaCha20State.
 func NewChaCha20RngFromState(state ChaCha20State) (*ChaCha20Rng, error) {
-	if state.Stream > uint64(maxSafeInteger) || state.WordPos > uint64(maxSafeInteger) {
-		return nil, fmt.Errorf("ChaCha20State stream and wordPos must be non-negative safe integers")
+	if err := state.Validate(); err != nil {
+		return nil, err
 	}
 	rng, err := NewChaCha20RngFromHex(state.SeedHex)
 	if err != nil {
@@ -178,13 +254,18 @@ func NewChaCha20RngFromState(state ChaCha20State) (*ChaCha20Rng, error) {
 	return rng, nil
 }
 
-// State exports a serializable cursor snapshot.
-func (g *ChaCha20Rng) State() ChaCha20State {
-	return ChaCha20State{
+// State exports a validated serializable cursor snapshot.
+// It returns an error if stream or wordPos exceeds MaxSafeCursor (2^53 - 1).
+func (g *ChaCha20Rng) State() (ChaCha20State, error) {
+	state := ChaCha20State{
 		SeedHex: EncodeSeedHex(g.seed),
 		Stream:  g.stream,
 		WordPos: g.wordPos,
 	}
+	if err := state.Validate(); err != nil {
+		return ChaCha20State{}, err
+	}
+	return state, nil
 }
 
 // SetStream sets the 64-bit ChaCha20 stream ID.
@@ -212,6 +293,9 @@ func (g *ChaCha20Rng) WordPos() uint64 {
 
 // NextU32 returns the next unsigned 32-bit integer and advances wordPos by 1.
 func (g *ChaCha20Rng) NextU32() uint32 {
+	if g.wordPos == ^uint64(0) {
+		panic("roomhost: ChaCha20Rng wordPos overflow")
+	}
 	blockIndex := g.wordPos >> 4
 	wordOffset := g.wordPos & 15
 	if !g.hasCachedBlock || g.cachedBlockIndex != blockIndex {

@@ -74,7 +74,82 @@ void VerifyChaCha20Vectors()
         {
             Assert(boundedRng.NextBounded(100u) == value, $"ChaCha20Rng NextBounded(100) mismatch for seed {seedHex}");
         }
+
+        var snapshot = boundedRng.GetState();
+        var serializedSnapshot = JsonSerializer.Serialize(snapshot, jsonOptions);
+        var deserializedSnapshot = JsonSerializer.Deserialize<ChaCha20State>(serializedSnapshot, jsonOptions)
+            ?? throw new InvalidOperationException("ChaCha20State deserialized to null.");
+        Assert(deserializedSnapshot == snapshot, "ChaCha20State JSON round-trip mismatch.");
+        Assert(ChaCha20Rng.FromState(deserializedSnapshot).NextUInt32() == boundedRng.NextUInt32(),
+            "ChaCha20Rng restored from JSON state diverged.");
     }
+
+    var validSeedHex = new string('1', ChaCha20Rng.RandomSeedHexLength);
+    var maxCursorRng = ChaCha20Rng.FromHex(validSeedHex, ChaCha20Rng.MaxSafeCursor, ChaCha20Rng.MaxSafeCursor);
+    var maxCursorState = maxCursorRng.GetState();
+    var maxCursorJson = JsonSerializer.Serialize(maxCursorState, jsonOptions);
+    Assert(JsonSerializer.Deserialize<ChaCha20State>(maxCursorJson, jsonOptions) == maxCursorState,
+        "MaxSafeCursor ChaCha20State JSON round-trip mismatch.");
+
+    _ = maxCursorRng.NextUInt32();
+    var rejectedUnsafeWordPos = false;
+    try
+    {
+        _ = maxCursorRng.GetState();
+    }
+    catch (InvalidOperationException)
+    {
+        rejectedUnsafeWordPos = true;
+    }
+    Assert(rejectedUnsafeWordPos, "GetState() accepted WordPos > MaxSafeCursor.");
+
+    var unsafeStreamRng = ChaCha20Rng.FromHex(validSeedHex, ChaCha20Rng.MaxSafeCursor + 1UL, 0UL);
+    var rejectedUnsafeStream = false;
+    try
+    {
+        _ = unsafeStreamRng.GetState();
+    }
+    catch (InvalidOperationException)
+    {
+        rejectedUnsafeStream = true;
+    }
+    Assert(rejectedUnsafeStream, "GetState() accepted Stream > MaxSafeCursor.");
+
+    foreach (var badJson in new[]
+    {
+        """[]""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":0,"wordPos":0,"extra":1}""",
+        $$$"""{"seedHex":"{{{validSeedHex.ToUpperInvariant()}}}","stream":0,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":-1,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":1.5,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":9007199254740992,"wordPos":0}""",
+        $$$"""{"seedHex":"{{{validSeedHex}}}","stream":0,"wordPos":9007199254740992}"""
+    })
+    {
+        var rejectedJson = false;
+        try
+        {
+            _ = JsonSerializer.Deserialize<ChaCha20State>(badJson, jsonOptions);
+        }
+        catch (JsonException)
+        {
+            rejectedJson = true;
+        }
+        Assert(rejectedJson, $"Deserialize<ChaCha20State> accepted invalid JSON: {badJson}");
+    }
+
+    var overflowRng = ChaCha20Rng.FromHex(validSeedHex, 0UL, ulong.MaxValue);
+    var caughtOverflow = false;
+    try
+    {
+        _ = overflowRng.NextUInt32();
+    }
+    catch (OverflowException)
+    {
+        caughtOverflow = true;
+    }
+    Assert(caughtOverflow, "NextUInt32() did not throw OverflowException at ulong.MaxValue.");
 
     foreach (var vector in fixture.GetProperty("deriveSeedVectors").EnumerateArray())
     {

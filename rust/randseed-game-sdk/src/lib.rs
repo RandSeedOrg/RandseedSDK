@@ -34,7 +34,7 @@ pub use platform::{PlatformClient, PlayerInfo};
 pub use prng::{
     derive_seed, derive_seed_hex, derive_seed_strs, encode_seed_hex, is_valid_seed_hex,
     legacy_seed_from_bytes, parse_seed_hex, ChaCha20Rng, ChaCha20State, Mulberry32,
-    DERIVE_SEED_DOMAIN_PREFIX, RANDOM_SEED_BYTES, RANDOM_SEED_HEX_LEN,
+    DERIVE_SEED_DOMAIN_PREFIX, MAX_SAFE_CURSOR, RANDOM_SEED_BYTES, RANDOM_SEED_HEX_LEN,
 };
 pub use replay::{
     evaluate_replay_storage_tier, validate_replay_data_v2, ReplayCommandItem, ReplayDataV2,

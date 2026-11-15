@@ -1622,6 +1622,25 @@ fn chacha20_and_derive_seed_match_every_shared_fixture_vector() {
     )
     .unwrap();
     assert_eq!(randseed_game_sdk::legacy_seed_from_bytes(&seed), 0x04030201);
+
+    let mut cursor_rng = randseed_game_sdk::ChaCha20Rng::from_seed(seed)
+        .with_stream(randseed_game_sdk::MAX_SAFE_CURSOR);
+    cursor_rng.set_word_pos(randseed_game_sdk::MAX_SAFE_CURSOR);
+    let exported = cursor_rng.state().unwrap();
+    let json_state = serde_json::to_value(&exported).unwrap();
+    let rehydrated: randseed_game_sdk::ChaCha20State = serde_json::from_value(json_state).unwrap();
+    assert_eq!(rehydrated, exported);
+
+    let _ = cursor_rng.next_u32();
+    assert!(cursor_rng.state().is_err());
+    assert!(
+        serde_json::from_value::<randseed_game_sdk::ChaCha20State>(json!({
+            "seedHex": randseed_game_sdk::encode_seed_hex(&seed),
+            "stream": randseed_game_sdk::MAX_SAFE_CURSOR + 1,
+            "wordPos": 0
+        }))
+        .is_err()
+    );
 }
 
 #[tokio::test]
