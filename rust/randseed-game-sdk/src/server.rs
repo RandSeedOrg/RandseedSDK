@@ -80,6 +80,11 @@ pub trait GameServer: Send + Sync + 'static {
         state: serde_json::Value,
     ) -> Result<TickResult, SdkError>;
 
+    /// Process one deterministic simulation tick with full request context (including `players` roster).
+    async fn tick_ext(&self, req: TickRequest) -> Result<TickResult, SdkError> {
+        self.tick(req.ctx, req.state).await
+    }
+
     /// Handle a player joining or reconnecting.
     async fn on_player_join(
         &self,
@@ -127,6 +132,11 @@ pub trait GameServer: Send + Sync + 'static {
         Err(SdkError::NotImplemented(
             "The on_command handler is not implemented.".into(),
         ))
+    }
+
+    /// Handle a trusted host command with full request context (including `players` roster).
+    async fn on_command_ext(&self, req: CommandRequest) -> Result<CommandResult, SdkError> {
+        self.on_command(req.command, req.state).await
     }
 }
 
@@ -263,6 +273,12 @@ fn classify_deserialization_error<T>(value: &serde_json::Value) -> SdkErrorCode 
             || options
                 .and_then(|options| options.get("seed"))
                 .is_some_and(|seed| !seed.is_number())
+            || options
+                .and_then(|options| options.get("randomSeed"))
+                .is_some_and(|seed| !seed.is_string())
+            || options
+                .and_then(|options| options.get("randomSeedIndex"))
+                .is_some_and(|index| !index.is_u64())
         {
             return SdkErrorCode::InvalidOptions;
         }
@@ -647,7 +663,7 @@ async fn handle_tick<G: GameServer>(
             return map_error_to_response(SdkError::protocol(SdkErrorCode::WrongRoster))
                 .into_response();
         }
-        Some(req.players.as_slice())
+        Some(req.players.clone())
     };
     let submitted_action_ids = req
         .ctx
@@ -666,7 +682,7 @@ async fn handle_tick<G: GameServer>(
         return map_error_to_response(SdkError::protocol(SdkErrorCode::InvalidAction))
             .into_response();
     }
-    match call_game(state.game.tick(req.ctx, req.state)).await {
+    match call_game(state.game.tick_ext(req)).await {
         Ok(res) if !result_units_are_valid(res.result_units.as_deref()) => {
             invalid_result_units_response(res.result_units.as_deref())
         }
@@ -684,10 +700,12 @@ async fn handle_tick<G: GameServer>(
         {
             invalid_action_results_response()
         }
-        Ok(res) => match validate_result_views(res.player_views.as_ref(), roster, &manifest) {
-            Ok(()) => (StatusCode::OK, Json(res)).into_response(),
-            Err(error) => map_error_to_response(error).into_response(),
-        },
+        Ok(res) => {
+            match validate_result_views(res.player_views.as_ref(), roster.as_deref(), &manifest) {
+                Ok(()) => (StatusCode::OK, Json(res)).into_response(),
+                Err(error) => map_error_to_response(error).into_response(),
+            }
+        }
         Err(err) => map_error_to_response(err).into_response(),
     }
 }
@@ -843,7 +861,7 @@ async fn handle_command<G: GameServer>(
         ))
         .into_response();
     }
-    match call_game(state.game.on_command(req.command, req.state)).await {
+    match call_game(state.game.on_command_ext(req)).await {
         Ok(res) if !result_units_are_valid(res.result_units.as_deref()) => {
             invalid_result_units_response(res.result_units.as_deref())
         }

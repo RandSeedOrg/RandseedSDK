@@ -1,7 +1,7 @@
 //! RandSeed game server SDK for Rust.
 //!
-//! Provides the room-host HTTP protocol runtime, deterministic Mulberry32,
-//! replay contracts, and a client for room-host platform services.
+//! Provides the room-host HTTP protocol runtime, deterministic ChaCha20Rng (plus
+//! legacy Mulberry32), replay contracts, and a client for room-host platform services.
 
 #![warn(missing_docs)]
 
@@ -31,7 +31,11 @@ pub use agent_player_view::{
 };
 pub use errors::{SdkError, SdkErrorCode};
 pub use platform::{PlatformClient, PlayerInfo};
-pub use prng::Mulberry32;
+pub use prng::{
+    derive_seed, derive_seed_hex, derive_seed_strs, encode_seed_hex, is_valid_seed_hex,
+    legacy_seed_from_bytes, parse_seed_hex, ChaCha20Rng, ChaCha20State, Mulberry32,
+    DERIVE_SEED_DOMAIN_PREFIX, RANDOM_SEED_BYTES, RANDOM_SEED_HEX_LEN,
+};
 pub use replay::{
     evaluate_replay_storage_tier, validate_replay_data_v2, ReplayCommandItem, ReplayDataV2,
     ReplayInputItem, ReplayStorageTier, TIER_A_MAX_COMPRESSED_BYTES, TIER_B_MAX_COMPRESSED_BYTES,

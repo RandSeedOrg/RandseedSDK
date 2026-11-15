@@ -770,12 +770,18 @@ pub fn validate_player_views(
     Ok(())
 }
 
-/// Match options, including the numeric seed used by deterministic games.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Match options, including the 256-bit VRF root seed and legacy numeric seed used by deterministic games.
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct MatchOptions {
-    /// Initial seed for a deterministic pseudo-random number generator.
+    /// Legacy numeric seed for 32-bit compatibility (`Mulberry32`).
     #[serde(default)]
     pub seed: f64,
+    /// Authoritative 32-byte match root seed encoded as 64 lowercase hex characters (`ChaCha20Rng`).
+    #[serde(rename = "randomSeed", skip_serializing_if = "Option::is_none")]
+    pub random_seed: Option<String>,
+    /// Optional non-negative safe-integer index of `randomSeed` in the on-chain `random_oracle` canister.
+    #[serde(rename = "randomSeedIndex", skip_serializing_if = "Option::is_none")]
+    pub random_seed_index: Option<u64>,
     /// Additional game-specific options.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -785,8 +791,52 @@ impl Default for MatchOptions {
     fn default() -> Self {
         Self {
             seed: 0.0,
+            random_seed: None,
+            random_seed_index: None,
             extra: HashMap::new(),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for MatchOptions {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut map = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let seed = match map.remove("seed") {
+            None => 0.0,
+            Some(val) => val
+                .as_f64()
+                .ok_or_else(|| serde::de::Error::custom("options.seed must be a finite number"))?,
+        };
+        let random_seed = match map.remove("randomSeed") {
+            None => None,
+            Some(serde_json::Value::String(s)) => Some(s),
+            Some(_) => {
+                return Err(serde::de::Error::custom(
+                    "options.randomSeed must be a 64-character lowercase hex string",
+                ));
+            }
+        };
+        let random_seed_index = match map.remove("randomSeedIndex") {
+            None => None,
+            Some(val) => {
+                let idx = val.as_u64().ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "options.randomSeedIndex must be a non-negative safe integer",
+                    )
+                })?;
+                Some(idx)
+            }
+        };
+        let extra = map.into_iter().collect();
+        Ok(Self {
+            seed,
+            random_seed,
+            random_seed_index,
+            extra,
+        })
     }
 }
 
@@ -950,6 +1000,22 @@ impl MatchConfig {
                 crate::errors::SdkErrorCode::InvalidOptions,
                 "options.seed must be a finite number.",
             ));
+        }
+        if let Some(ref random_seed) = self.options.random_seed {
+            if !crate::prng::is_valid_seed_hex(random_seed) {
+                return Err(SdkError::protocol_with_message(
+                    crate::errors::SdkErrorCode::InvalidOptions,
+                    "options.randomSeed must be a 64-character lowercase hex string.",
+                ));
+            }
+        }
+        if let Some(random_seed_index) = self.options.random_seed_index {
+            if random_seed_index > MAX_SAFE_INTEGER {
+                return Err(SdkError::protocol_with_message(
+                    crate::errors::SdkErrorCode::InvalidOptions,
+                    "options.randomSeedIndex must be a non-negative safe integer.",
+                ));
+            }
         }
         if let Some(tick_rate_hz) = self.tick_rate_hz {
             if !tick_rate_hz.is_finite() || !(1.0..=60.0).contains(&tick_rate_hz) {

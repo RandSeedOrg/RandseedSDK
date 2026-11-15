@@ -29,11 +29,28 @@ type fixtureDocument struct {
 	CommandRequest        CommandRequest     `json:"commandRequest"`
 	CommandResponse       CommandResult      `json:"commandResponse"`
 	PRNGVectors           []prngFixtureVector `json:"prngVectors"`
+	ChaCha20Vectors       []chacha20FixtureVector `json:"chacha20Vectors"`
+	DeriveSeedVectors     []deriveSeedFixtureVector `json:"deriveSeedVectors"`
 }
 
 type prngFixtureVector struct {
 	Seed int64    `json:"seed"`
 	U32  []uint32 `json:"u32"`
+}
+
+type chacha20FixtureVector struct {
+	SeedHex    string   `json:"seedHex"`
+	Stream     uint64   `json:"stream"`
+	WordPos    uint64   `json:"wordPos"`
+	U32        []uint32 `json:"u32"`
+	Bounded100 []uint32 `json:"bounded100"`
+}
+
+type deriveSeedFixtureVector struct {
+	RootSeedHex    string   `json:"rootSeedHex"`
+	Domains        []string `json:"domains"`
+	DerivedSeedHex string   `json:"derivedSeedHex"`
+	FirstU32       uint32   `json:"firstU32"`
 }
 
 type fixtureServer struct {
@@ -219,6 +236,60 @@ func TestMulberry32MatchesEverySharedVector(t *testing.T) {
 	}
 }
 
+func TestChaCha20AndDeriveSeedMatchEverySharedVector(t *testing.T) {
+	fixture := loadFixture(t)
+	for idx, vector := range fixture.ChaCha20Vectors {
+		t.Run(fmt.Sprintf("chacha20_%d", idx), func(t *testing.T) {
+			generator, err := NewChaCha20RngFromState(ChaCha20State{
+				SeedHex: vector.SeedHex,
+				Stream:  vector.Stream,
+				WordPos: vector.WordPos,
+			})
+			if err != nil {
+				t.Fatalf("NewChaCha20RngFromState: %v", err)
+			}
+			for index, want := range vector.U32 {
+				if got := generator.NextU32(); got != want {
+					t.Fatalf("u32[%d] = %d, want %d", index, got, want)
+				}
+			}
+
+			boundedGen, err := NewChaCha20RngFromState(ChaCha20State{
+				SeedHex: vector.SeedHex,
+				Stream:  vector.Stream,
+				WordPos: vector.WordPos,
+			})
+			if err != nil {
+				t.Fatalf("NewChaCha20RngFromState bounded: %v", err)
+			}
+			for index, want := range vector.Bounded100 {
+				if got := boundedGen.NextBounded(100); got != want {
+					t.Fatalf("bounded100[%d] = %d, want %d", index, got, want)
+				}
+			}
+		})
+	}
+
+	for idx, vector := range fixture.DeriveSeedVectors {
+		t.Run(fmt.Sprintf("derive_%d", idx), func(t *testing.T) {
+			derivedHex, err := DeriveSeedHex(vector.RootSeedHex, vector.Domains...)
+			if err != nil {
+				t.Fatalf("DeriveSeedHex: %v", err)
+			}
+			if derivedHex != vector.DerivedSeedHex {
+				t.Fatalf("derivedSeedHex = %q, want %q", derivedHex, vector.DerivedSeedHex)
+			}
+			rng, err := NewChaCha20RngFromHex(derivedHex)
+			if err != nil {
+				t.Fatalf("NewChaCha20RngFromHex: %v", err)
+			}
+			if got := rng.NextU32(); got != vector.FirstU32 {
+				t.Fatalf("firstU32 = %d, want %d", got, vector.FirstU32)
+			}
+		})
+	}
+}
+
 func TestToInt32UsesJavaScriptConversion(t *testing.T) {
 	tests := []struct {
 		seed float64
@@ -268,6 +339,31 @@ func TestInvalidRequestsAreRejected(t *testing.T) {
 			name: "non-numeric seed",
 			path: "/init",
 			body: `{"matchId":"m","gameId":"g","players":["p"],"matchSeq":1,"options":{"seed":null}}`,
+		},
+		{
+			name: "null randomSeed",
+			path: "/init",
+			body: `{"matchId":"m","gameId":"g","players":["p"],"matchSeq":1,"options":{"randomSeed":null}}`,
+		},
+		{
+			name: "short randomSeed",
+			path: "/init",
+			body: `{"matchId":"m","gameId":"g","players":["p"],"matchSeq":1,"options":{"randomSeed":"abcd"}}`,
+		},
+		{
+			name: "uppercase randomSeed",
+			path: "/init",
+			body: `{"matchId":"m","gameId":"g","players":["p"],"matchSeq":1,"options":{"randomSeed":"000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"}}`,
+		},
+		{
+			name: "negative randomSeedIndex",
+			path: "/init",
+			body: `{"matchId":"m","gameId":"g","players":["p"],"matchSeq":1,"options":{"randomSeedIndex":-1}}`,
+		},
+		{
+			name: "unsafe randomSeedIndex",
+			path: "/init",
+			body: `{"matchId":"m","gameId":"g","players":["p"],"matchSeq":1,"options":{"randomSeedIndex":9007199254740992}}`,
 		},
 		{
 			name: "missing match sequence",

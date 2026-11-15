@@ -21,6 +21,7 @@ var gameResult = Read<GameResult>("gameOverResponse");
 var commandResult = Read<CommandResult>("commandResponse");
 
 VerifyMulberryVectors();
+VerifyChaCha20Vectors();
 await VerifyHttpHostAsync();
 await VerifyResultUnitHostAsync();
 Console.WriteLine("All .NET SDK fixture, PRNG, validation, and HTTP serialization checks passed.");
@@ -50,6 +51,42 @@ void VerifyMulberryVectors()
     Assert(Mulberry32.ToInt32(4_294_967_296d) == 0, "ToInt32 full-wrap mismatch");
     Assert(Mulberry32.ToInt32(-1.9d) == -1, "ToInt32 must truncate toward zero");
     Assert(Mulberry32.ToInt32(double.PositiveInfinity) == 0, "ToInt32 non-finite conversion mismatch");
+}
+
+void VerifyChaCha20Vectors()
+{
+    foreach (var vector in fixture.GetProperty("chacha20Vectors").EnumerateArray())
+    {
+        var seedHex = vector.GetProperty("seedHex").GetString()!;
+        var stream = vector.GetProperty("stream").GetUInt64();
+        var wordPos = vector.GetProperty("wordPos").GetUInt64();
+        var expectedU32 = vector.GetProperty("u32").EnumerateArray().Select(v => v.GetUInt32()).ToArray();
+        var expectedBounded = vector.GetProperty("bounded100").EnumerateArray().Select(v => v.GetUInt32()).ToArray();
+
+        var rng = ChaCha20Rng.FromState(new ChaCha20State(seedHex, stream, wordPos));
+        foreach (var value in expectedU32)
+        {
+            Assert(rng.NextUInt32() == value, $"ChaCha20Rng NextUInt32 mismatch for seed {seedHex}");
+        }
+
+        var boundedRng = ChaCha20Rng.FromState(new ChaCha20State(seedHex, stream, wordPos));
+        foreach (var value in expectedBounded)
+        {
+            Assert(boundedRng.NextBounded(100u) == value, $"ChaCha20Rng NextBounded(100) mismatch for seed {seedHex}");
+        }
+    }
+
+    foreach (var vector in fixture.GetProperty("deriveSeedVectors").EnumerateArray())
+    {
+        var rootSeedHex = vector.GetProperty("rootSeedHex").GetString()!;
+        var domains = vector.GetProperty("domains").EnumerateArray().Select(v => v.GetString()!).ToArray();
+        var expectedHex = vector.GetProperty("derivedSeedHex").GetString()!;
+        var expectedFirstU32 = vector.GetProperty("firstU32").GetUInt32();
+
+        var derivedHex = ChaCha20Rng.DeriveSeedHex(rootSeedHex, domains);
+        Assert(derivedHex == expectedHex, $"DeriveSeedHex mismatch for {rootSeedHex}");
+        Assert(ChaCha20Rng.FromHex(derivedHex).NextUInt32() == expectedFirstU32, $"DeriveSeedHex firstU32 mismatch for {rootSeedHex}");
+    }
 }
 
 async Task VerifyHttpHostAsync()
@@ -100,7 +137,13 @@ async Task VerifyHttpHostAsync()
         {
             ("", HttpStatusCode.OK),
             (""","options":{}""", HttpStatusCode.OK),
-            (""","options":null""", HttpStatusCode.BadRequest)
+            (""","options":null""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","randomSeedIndex":0}""", HttpStatusCode.OK),
+            (""","options":{"randomSeed":null}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeed":"ABCD"}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeedIndex":-1}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeedIndex":1.5}""", HttpStatusCode.BadRequest),
+            (""","options":{"randomSeedIndex":9007199254740992}""", HttpStatusCode.BadRequest)
         })
         {
             using var response = await PostRawAsync(client, "/init",

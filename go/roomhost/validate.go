@@ -66,18 +66,34 @@ func validMatchConfig(config MatchConfig, data []byte) bool {
 	if !ok {
 		return false
 	}
-	seed, exists := options["seed"]
-	if !exists {
-		return true
+	if seed, exists := options["seed"]; exists {
+		if isJSONNull(seed) {
+			return false
+		}
+		var value float64
+		if err := json.Unmarshal(seed, &value); err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
 	}
-	if isJSONNull(seed) {
-		return false
+	if rawRandomSeed, exists := options["randomSeed"]; exists {
+		if isJSONNull(rawRandomSeed) {
+			return false
+		}
+		var randomSeed string
+		if err := json.Unmarshal(rawRandomSeed, &randomSeed); err != nil || !IsValidSeedHex(randomSeed) {
+			return false
+		}
 	}
-	var value float64
-	if err := json.Unmarshal(seed, &value); err != nil {
-		return false
+	if rawSeedIndex, exists := options["randomSeedIndex"]; exists {
+		if isJSONNull(rawSeedIndex) {
+			return false
+		}
+		var seedIndex int64
+		if err := decodeStrictJSON(rawSeedIndex, &seedIndex); err != nil || seedIndex < 0 || seedIndex > maxSafeInteger {
+			return false
+		}
 	}
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
+	return true
 }
 
 func validTickRequest(request TickRequest, data []byte) bool {

@@ -1,4 +1,5 @@
 #include "randseed/protocol.hpp"
+#include "randseed/chacha20.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -989,6 +990,18 @@ MatchConfig parse_match_config(const Json& value) {
             if (!seed.is_number() || !std::isfinite(seed.get<double>())) {
                 throw ValidationError("options.seed must be a finite number");
             }
+        }
+        if (options.contains("randomSeed")) {
+            const auto& random_seed = options.at("randomSeed");
+            if (!random_seed.is_string() ||
+                !is_valid_seed_hex(random_seed.get<std::string>())) {
+                throw ValidationError(
+                    "options.randomSeed must be a 64-character lowercase hex string");
+            }
+        }
+        if (options.contains("randomSeedIndex")) {
+            static_cast<void>(require_nonnegative_integer(
+                options.at("randomSeedIndex"), "options.randomSeedIndex"));
         }
         config.options = options;
     }

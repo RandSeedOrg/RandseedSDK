@@ -849,7 +849,7 @@ async fn test_wire_protocol_endpoints_real_tcp() {
         match_seq: 1,
         options: MatchOptions {
             seed: 987654.0,
-            extra: HashMap::new(),
+            ..MatchOptions::default()
         },
         carryover: None,
         tick_rate_hz: Some(20.0),
@@ -1560,4 +1560,177 @@ fn tick_input_deserializes_action_fields_without_polluting_data_and_rejects_null
         null_schema_id.is_err(),
         "explicit null actionSchemaId must fail deserialization"
     );
+}
+
+#[test]
+fn chacha20_and_derive_seed_match_every_shared_fixture_vector() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/room-host-v1.json")).unwrap();
+
+    for vector in fixture["chacha20Vectors"].as_array().unwrap() {
+        let seed_hex = vector["seedHex"].as_str().unwrap();
+        let stream = vector["stream"].as_u64().unwrap();
+        let word_pos = vector["wordPos"].as_u64().unwrap();
+        let expected_u32: Vec<u32> = vector["u32"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap() as u32)
+            .collect();
+        let expected_bounded: Vec<u32> = vector["bounded100"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap() as u32)
+            .collect();
+
+        let state = randseed_game_sdk::ChaCha20State {
+            seed_hex: seed_hex.to_string(),
+            stream,
+            word_pos,
+        };
+        let mut rng = randseed_game_sdk::ChaCha20Rng::from_state(&state).unwrap();
+        let actual_u32: Vec<u32> = (0..expected_u32.len()).map(|_| rng.next_u32()).collect();
+        assert_eq!(actual_u32, expected_u32);
+
+        let mut bounded_rng = randseed_game_sdk::ChaCha20Rng::from_state(&state).unwrap();
+        let actual_bounded: Vec<u32> = (0..expected_bounded.len())
+            .map(|_| bounded_rng.next_bounded(100))
+            .collect();
+        assert_eq!(actual_bounded, expected_bounded);
+    }
+
+    for vector in fixture["deriveSeedVectors"].as_array().unwrap() {
+        let root_hex = vector["rootSeedHex"].as_str().unwrap();
+        let domains: Vec<&str> = vector["domains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d.as_str().unwrap())
+            .collect();
+        let expected_hex = vector["derivedSeedHex"].as_str().unwrap();
+        let expected_first_u32 = vector["firstU32"].as_u64().unwrap() as u32;
+
+        let derived_hex = randseed_game_sdk::derive_seed_hex(root_hex, &domains).unwrap();
+        assert_eq!(derived_hex, expected_hex);
+        let mut rng = randseed_game_sdk::ChaCha20Rng::from_seed_hex(&derived_hex).unwrap();
+        assert_eq!(rng.next_u32(), expected_first_u32);
+    }
+
+    let seed = randseed_game_sdk::parse_seed_hex(
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    )
+    .unwrap();
+    assert_eq!(randseed_game_sdk::legacy_seed_from_bytes(&seed), 0x04030201);
+}
+
+#[tokio::test]
+async fn init_route_validates_random_seed_and_random_seed_index_options() {
+    struct SeedEchoGame;
+
+    #[async_trait]
+    impl GameServer for SeedEchoGame {
+        async fn manifest(&self) -> Result<GameManifest, SdkError> {
+            Ok(GameManifest {
+                title: "Seed Echo".into(),
+                version: "1.0.0".into(),
+                min_players: 1,
+                max_players: 4,
+                tick_rate_hz: 10.0,
+                persistent_table: false,
+                options_schema: None,
+                player_view_mode: None,
+                result_definition: None,
+            })
+        }
+
+        async fn init(&self, config: MatchConfig) -> Result<InitResult, SdkError> {
+            Ok(InitResult {
+                state: json!({
+                    "randomSeed": config.options.random_seed,
+                    "randomSeedIndex": config.options.random_seed_index,
+                    "seed": config.options.seed,
+                }),
+                ..Default::default()
+            })
+        }
+
+        async fn tick(&self, _ctx: TickContext, state: serde_json::Value) -> Result<TickResult, SdkError> {
+            Ok(TickResult { state, persist: false, ..Default::default() })
+        }
+
+        async fn on_player_join(&self, _player_id: String, state: serde_json::Value) -> Result<PlayerEventResult, SdkError> {
+            Ok(PlayerEventResult { state, ..Default::default() })
+        }
+
+        async fn on_player_leave(&self, _player_id: String, state: serde_json::Value) -> Result<PlayerEventResult, SdkError> {
+            Ok(PlayerEventResult { state, ..Default::default() })
+        }
+
+        async fn is_game_over(&self, _state: serde_json::Value) -> Result<GameResult, SdkError> {
+            Ok(GameResult { over: false, summary: None, next_match_policy: None, result_units: None })
+        }
+    }
+
+    let app = create_game_router(Arc::new(SeedEchoGame), Some("seed-echo".into()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/init");
+    let valid_seed = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    let ok_resp = client
+        .post(&url)
+        .json(&json!({
+            "matchId": "m-1",
+            "gameId": "seed-echo",
+            "players": ["p1"],
+            "matchSeq": 1,
+            "options": {
+                "randomSeed": valid_seed,
+                "randomSeedIndex": 0,
+                "seed": 50462976
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok_resp.status(), 200);
+    let ok_body: serde_json::Value = ok_resp.json().await.unwrap();
+    assert_eq!(ok_body["state"]["randomSeed"], valid_seed);
+    assert_eq!(ok_body["state"]["randomSeedIndex"], 0);
+
+    for invalid_options in [
+        json!({ "randomSeed": null }),
+        json!({ "randomSeed": "abcd" }),
+        json!({ "randomSeed": valid_seed.to_ascii_uppercase() }),
+        json!({ "randomSeedIndex": null }),
+        json!({ "randomSeedIndex": -1 }),
+        json!({ "randomSeedIndex": 1.5 }),
+        json!({ "randomSeedIndex": 9_007_199_254_740_992u64 }),
+        json!({ "randomSeedIndex": "0" }),
+    ] {
+        let resp = client
+            .post(&url)
+            .json(&json!({
+                "matchId": "m-1",
+                "gameId": "seed-echo",
+                "players": ["p1"],
+                "matchSeq": 1,
+                "options": invalid_options
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "expected 400 for {invalid_options}");
+        let err_body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            err_body["code"], "INVALID_OPTIONS",
+            "expected INVALID_OPTIONS for {invalid_options}"
+        );
+    }
 }
