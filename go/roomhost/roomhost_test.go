@@ -311,7 +311,7 @@ func TestChaCha20AndDeriveSeedMatchEverySharedVector(t *testing.T) {
 }
 
 func TestChaCha20StateSafeCursorAndJSONValidation(t *testing.T) {
-	validSeed := strings.Repeat("11", RandomSeedBytes)
+	validSeed := strings.Repeat("1a", RandomSeedBytes)
 	rng, err := NewChaCha20RngFromHex(validSeed)
 	if err != nil {
 		t.Fatalf("NewChaCha20RngFromHex: %v", err)

@@ -84,7 +84,7 @@ void VerifyChaCha20Vectors()
             "ChaCha20Rng restored from JSON state diverged.");
     }
 
-    var validSeedHex = new string('1', ChaCha20Rng.RandomSeedHexLength);
+    var validSeedHex = new string('a', ChaCha20Rng.RandomSeedHexLength);
     var maxCursorRng = ChaCha20Rng.FromHex(validSeedHex, ChaCha20Rng.MaxSafeCursor, ChaCha20Rng.MaxSafeCursor);
     var maxCursorState = maxCursorRng.GetState();
     var maxCursorJson = JsonSerializer.Serialize(maxCursorState, jsonOptions);
@@ -114,6 +114,26 @@ void VerifyChaCha20Vectors()
         rejectedUnsafeStream = true;
     }
     Assert(rejectedUnsafeStream, "GetState() accepted Stream > MaxSafeCursor.");
+
+    foreach (var invalidState in new[]
+    {
+        new ChaCha20State("abcd", 0UL, 0UL),
+        new ChaCha20State(validSeedHex.ToUpperInvariant(), 0UL, 0UL),
+        new ChaCha20State(validSeedHex, ChaCha20Rng.MaxSafeCursor + 1UL, 0UL),
+        new ChaCha20State(validSeedHex, 0UL, ChaCha20Rng.MaxSafeCursor + 1UL)
+    })
+    {
+        var rejectedSerialize = false;
+        try
+        {
+            _ = JsonSerializer.Serialize(invalidState, jsonOptions);
+        }
+        catch (JsonException)
+        {
+            rejectedSerialize = true;
+        }
+        Assert(rejectedSerialize, $"Serialize<ChaCha20State> accepted invalid state: {invalidState}");
+    }
 
     foreach (var badJson in new[]
     {
