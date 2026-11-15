@@ -369,8 +369,8 @@ departure. Do not assume one leave event means a player forfeited. An
 idempotently instead of creating a second seat or resetting the hand.
 
 Decide and implement the game's own offline behavior in its authoritative
-state: for example, retain a player's logical seat and hand in canonical state for a bounded wait, or apply a
-game-defined timeout, automatic action, or forfeiture.
+state: for example, retain a player's logical seat and hand for a bounded wait,
+or apply a game-defined timeout, automatic action, or forfeiture. There is no
 general server SDK setting that makes the platform wait or pause a match for
 one disconnected player. Simulation and game timers can advance while a
 player is offline. A reconnect receives the current authoritative state, not
@@ -400,6 +400,45 @@ settlement may see a later match. Preserve required between-match data through
 the game-defined carryover. With `wait_for_ready`, platform readiness and its
 timeout determine when the next match may start. With `close_room`, a new
 allocation is needed for another room.
+
+### Cross-release data continuity
+
+Room state, session checkpoints, and game-defined carryover are recovery
+mechanisms for a room bound to its current game, environment, and runtime
+version. On RandSeed, activating a new runtime version does not automatically
+hydrate the new version from an older room. The old room may remain associated
+with its original version, but the SDK does not define a cross-release state
+migration or guarantee that the old room history remains queryable. A new
+release is not a storage migration.
+
+Do not treat `persistentTable`, `nextMatchPolicy`, `manifest.version`, or
+`resultDefinition.version` as a promise of cross-release persistence:
+
+- `persistentTable` and carryover do not replace a durable game-level data
+  contract. A history kept only in room state (especially a bounded recent
+  history) can appear empty when players enter a room on a new runtime version.
+- `manifest.version` is publisher metadata. It is distinct from the host's
+  runtime-version binding and does not migrate stored state.
+- `resultDefinition.version` identifies the result metric contract. Keep it
+  stable while metric meanings stay the same; changing it creates a separately
+  versioned result series for consumers. The Server SDK validates result
+  declarations and events but does not persist them, deliver them to Archive,
+  merge versions, or expose leaderboard/statistics queries.
+
+For all-time rankings, player progression, inventory, or other data that must
+survive bug-fix releases, use a durable game-level store whose namespace and
+retention are explicitly stable across runtime versions. Key records by stable
+game and player identities, not an ephemeral room or runtime instance. Define
+schema versioning, idempotent writes, retention/deletion, and a migration or
+backfill plan. If a metric's meaning changes, decide whether to start a new
+ranking, provide a combined historical view, or migrate old results; do not
+silently assume the new release will see old room state.
+
+Before deploying an upgrade, test with existing records: publish a new runtime
+version, create a room under it, and verify that the intended historical
+rankings/progression remain visible. Confirm persisted result/archive receipts
+and the exact query path; a `resultUnits` response alone is not proof that the
+event was stored or can be queried.
 
 ### Verification checklist
 

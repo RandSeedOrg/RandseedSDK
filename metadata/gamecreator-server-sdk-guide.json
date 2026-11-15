@@ -27,6 +27,10 @@
       "description": "Node.js and Rust support Session Stream v1 with checkpoint hydration, contiguous ticks, deterministic replay, and action results. Keep seats, hands, turns, and timers in authoritative state so a reconnect can recover the current match."
     },
     {
+      "name": "Cross-release data continuity",
+      "description": "Room recovery is pinned to a game, environment, and runtime version; new releases do not migrate room state. Store all-time rankings and progression in explicitly durable game-level storage. Result Units alone do not provide persistence or queries."
+    },
+    {
       "name": "Disconnect behavior",
       "description": "A leave can be a temporary disconnect and a join can be a reconnect. Implement seat retention, waiting, timeouts, and forfeits in game rules; the server SDK does not configure a general per-player disconnect wait."
     },

@@ -95,6 +95,17 @@ The host provides recovery mechanisms; game rules decide whether an offline
 player waits, times out, or is removed. No general disconnect-wait policy is
 currently exposed by the server SDK.
 
+### Data continuity across releases
+
+Room state and match carryover are not a cross-release data store. A new
+runtime version does not automatically migrate an existing room's state,
+history, rankings, or inventory. Store long-lived player/game data in an
+explicit durable game-level service and define its identity, retention, schema
+migrations, and old-data backfill. Result Units are an event contract, not a
+statistics database or query API; verify archive commitment and query support
+before relying on them for rankings. See
+[Cross-release data continuity](./protocol/room-host-v1.md#cross-release-data-continuity).
+
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
 implementation in this repository is tested against the same
 [wire fixture](./protocol/fixtures/room-host-v1.json), including deterministic
