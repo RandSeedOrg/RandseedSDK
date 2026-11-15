@@ -38,7 +38,21 @@ import {
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 export interface CreateGameServerOptions {
+  /** Optional compatibility check; the ID is always obtained from RANDSEED_GAME_ID. */
   gameId?: string;
+}
+
+function resolveGameId(configuredId: string | undefined): string | undefined {
+  const platformId = process.env.RANDSEED_GAME_ID;
+  for (const [name, value] of [["RANDSEED_GAME_ID", platformId], ["gameId", configuredId]] as const) {
+    if (value !== undefined && (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value))) {
+      throw new TypeError(`${name} must be a valid RandSeed Game ID.`);
+    }
+  }
+  if (platformId !== undefined && configuredId !== undefined && platformId !== configuredId) {
+    throw new TypeError("gameId must match the platform-provided RANDSEED_GAME_ID.");
+  }
+  return platformId;
 }
 
 class RequestError extends Error {
@@ -308,6 +322,7 @@ export function createGameServer(
   port = 8080,
   options: CreateGameServerOptions = {},
 ): http.Server {
+  const gameId = resolveGameId(options.gameId);
   const getManifest = async (): Promise<GameManifest> => {
     const manifest = await callGame(() => game.manifest());
     validateManifest(manifest);
@@ -372,7 +387,11 @@ export function createGameServer(
           );
           return;
         }
-        if (options.gameId && playerRequest.context.scope.gameId !== options.gameId) {
+        if (!gameId) {
+          sendSdkError(res, 503, "INTERNAL_ERROR", "The platform RANDSEED_GAME_ID is unavailable.");
+          return;
+        }
+        if (playerRequest.context.scope.gameId !== gameId) {
           sendSdkError(res, 400, "INVALID_REQUEST", "Agent player view game scope does not match this server.");
           return;
         }
@@ -417,9 +436,13 @@ export function createGameServer(
       }
 
       if (method === "GET" && pathname === "/health") {
+        if (!gameId) {
+          sendSdkError(res, 503, "INTERNAL_ERROR", "The platform RANDSEED_GAME_ID is unavailable.");
+          return;
+        }
         sendJson(res, 200, {
           status: "ok",
-          gameId: options.gameId || "game",
+          gameId,
           uptime: process.uptime(),
         });
         return;

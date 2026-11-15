@@ -85,3 +85,43 @@ test("Legacy game servers do not opt in to Agent support", async () => {
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test("Health checks require a valid platform Game ID", async t => {
+  const previous = process.env.RANDSEED_GAME_ID;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RANDSEED_GAME_ID;
+    else process.env.RANDSEED_GAME_ID = previous;
+  });
+  delete process.env.RANDSEED_GAME_ID;
+  for (const options of [{}, { gameId: "caller-game" }]) {
+    const missing = createGameServer({}, 0, options);
+    await new Promise(resolve => missing.once("listening", resolve));
+    try {
+      const unavailable = await fetch(`http://127.0.0.1:${missing.address().port}/health`);
+      assert.equal(unavailable.status, 503);
+      assert.equal((await unavailable.json()).error, "The platform RANDSEED_GAME_ID is unavailable.");
+    } finally {
+      await new Promise(resolve => missing.close(resolve));
+    }
+  }
+
+  process.env.RANDSEED_GAME_ID = "platform-game";
+  assert.throws(() => createGameServer({}, 0, { gameId: "other-game" }), /must match/);
+  assert.throws(() => createGameServer({}, 0, { gameId: "" }), /valid RandSeed Game ID/);
+  const configured = createGameServer({}, 0, { gameId: "platform-game" });
+  t.after(() => new Promise(resolve => configured.close(resolve)));
+  await new Promise(resolve => configured.once("listening", resolve));
+  const response = await fetch(`http://127.0.0.1:${configured.address().port}/health`);
+  const health = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(health.status, "ok");
+  assert.equal(health.gameId, "platform-game");
+  assert.equal(typeof health.uptime, "number");
+
+  for (const invalid of ["", "bad id", "a".repeat(65)]) {
+    process.env.RANDSEED_GAME_ID = invalid;
+    assert.throws(() => createGameServer({}, 0), /valid RandSeed Game ID/);
+  }
+  delete process.env.RANDSEED_GAME_ID;
+  assert.throws(() => createGameServer({}, 0, { gameId: 123 }), /valid RandSeed Game ID/);
+});

@@ -57,6 +57,12 @@ test("action requests, receipts, leases, and no-action Skill decisions match sha
 });
 
 test("host projection endpoint returns only the game-authored recipient view", async t => {
+  const previous = process.env.RANDSEED_GAME_ID;
+  process.env.RANDSEED_GAME_ID = "hidden-hand";
+  t.after(() => {
+    if (previous === undefined) delete process.env.RANDSEED_GAME_ID;
+    else process.env.RANDSEED_GAME_ID = previous;
+  });
   const server = createGameServer({
     agentPlayerContract: () => fixture.contract,
     projectAgentPlayerView: request => {
@@ -84,6 +90,12 @@ test("host projection endpoint returns only the game-authored recipient view", a
 });
 
 test("nullable Agent player contracts return 404 without calling the projector", async t => {
+  const previous = process.env.RANDSEED_GAME_ID;
+  process.env.RANDSEED_GAME_ID = "hidden-hand";
+  t.after(() => {
+    if (previous === undefined) delete process.env.RANDSEED_GAME_ID;
+    else process.env.RANDSEED_GAME_ID = previous;
+  });
   let projectCalls = 0;
   const server = createGameServer({
     agentPlayerContract: () => null,
@@ -107,4 +119,38 @@ test("nullable Agent player contracts return 404 without calling the projector",
   });
   assert.equal(viewResponse.status, 404);
   assert.equal(projectCalls, 0);
+});
+
+test("Agent player views require and validate the platform game scope", async t => {
+  const previous = process.env.RANDSEED_GAME_ID;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RANDSEED_GAME_ID;
+    else process.env.RANDSEED_GAME_ID = previous;
+  });
+  const game = {
+    agentPlayerContract: () => fixture.contract,
+    projectAgentPlayerView: () => fixture.projection,
+  };
+  delete process.env.RANDSEED_GAME_ID;
+  const unconfigured = createGameServer(game, 0, { gameId: "hidden-hand" });
+  t.after(() => new Promise(resolve => unconfigured.close(resolve)));
+  await once(unconfigured, "listening");
+  process.env.RANDSEED_GAME_ID = "hidden-hand";
+  const configured = createGameServer(game, 0);
+  t.after(() => new Promise(resolve => configured.close(resolve)));
+  await once(configured, "listening");
+  const request = async (server, body) => fetch(`http://127.0.0.1:${server.address().port}/agent/player-view`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const unavailable = await request(unconfigured, fixture.request);
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).error, "The platform RANDSEED_GAME_ID is unavailable.");
+  const wrongScope = structuredClone(fixture.request);
+  wrongScope.context.scope.gameId = "other-game";
+  assert.equal((await request(configured, wrongScope)).status, 400);
+  const accepted = await request(configured, fixture.request);
+  assert.equal(accepted.status, 200);
+  assert.deepEqual(await accepted.json(), fixture.view);
 });

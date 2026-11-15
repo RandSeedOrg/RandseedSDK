@@ -22,6 +22,7 @@ import {
 } from "../dist/index.js";
 
 describe("Node.js Server SDK", () => {
+  const previousGameId = process.env.RANDSEED_GAME_ID;
   let server;
   let serverPort;
   let baseUrl;
@@ -113,6 +114,7 @@ describe("Node.js Server SDK", () => {
 
   before(async () => {
     // Listen on an ephemeral port to avoid conflicts with parallel tests.
+    process.env.RANDSEED_GAME_ID = "test-card-game";
     server = createGameServer(mockGame, 0, { gameId: "test-card-game" });
     await new Promise((resolve) => server.once("listening", resolve));
     serverPort = server.address().port;
@@ -123,6 +125,8 @@ describe("Node.js Server SDK", () => {
     if (server) {
       await new Promise((resolve) => server.close(resolve));
     }
+    if (previousGameId === undefined) delete process.env.RANDSEED_GAME_ID;
+    else process.env.RANDSEED_GAME_ID = previousGameId;
   });
 
   describe("Room Host Protocol endpoints", () => {
