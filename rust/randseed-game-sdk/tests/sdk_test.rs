@@ -1348,8 +1348,8 @@ async fn test_platform_client_custom_mock() {
                             {
                                 "playerId": "p1",
                                 "joinedAt": 1000,
-                                "displayName": "Player One",
-                                "avatarUrl": "https://game.example/api/public/profile-avatar?name=Player%20One",
+                                "displayName": "PII_SENTINEL_NAME",
+                                "avatarUrl": "PII_SENTINEL_AVATAR",
                                 "isGameCreator": true
                             },
                             { "playerId": "p2", "joinedAt": 2000 }
@@ -1408,14 +1408,9 @@ async fn test_platform_client_custom_mock() {
     let players = client.get_players().await.unwrap();
     assert_eq!(players.len(), 2);
     assert_eq!(players[0].player_id, "p1");
-    assert_eq!(players[0].display_name.as_deref(), Some("Player One"));
-    assert_eq!(
-        players[0].avatar_url.as_deref(),
-        Some("https://game.example/api/public/profile-avatar?name=Player%20One")
-    );
-    assert_eq!(players[0].is_game_creator, Some(true));
-    assert_eq!(players[1].display_name, None);
-    assert_eq!(players[1].avatar_url, None);
+    let encoded_players = serde_json::to_string(&players).unwrap();
+    assert!(!encoded_players.contains("PII_SENTINEL"));
+    assert!(!encoded_players.contains("isGameCreator"));
 
     let val = client.kv_get("key1").await.unwrap();
     assert_eq!(val, Some(json!("val1")));

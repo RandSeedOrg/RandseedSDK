@@ -16,7 +16,7 @@ axum = { version = "0.8", default-features = false, features = ["tokio", "http1"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time"] }
 tracing = "0.1"

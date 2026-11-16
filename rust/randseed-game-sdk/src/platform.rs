@@ -16,24 +16,6 @@ pub struct PlayerInfo {
     /// Connection time in epoch milliseconds.
     #[serde(rename = "joinedAt")]
     pub joined_at: u64,
-    /// Public display name supplied by the platform, when available.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "displayName"
-    )]
-    pub display_name: Option<String>,
-    /// Platform-hosted avatar resource for the public profile, when available.
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "avatarUrl")]
-    pub avatar_url: Option<String>,
-    /// Whether this player owns the game for the current room, when known.
-    /// This is metadata, not authorization evidence.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "isGameCreator"
-    )]
-    pub is_game_creator: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +82,11 @@ impl PlatformClient {
             client: reqwest::Client::new(),
             vhost_map,
         }
+    }
+
+    /// Return the typed client for the room-host game-owned data service.
+    pub fn data(&self) -> crate::game_data::GameDataClient {
+        crate::game_data::GameDataClient::new(self.client.clone(), self.vhost_map.clone())
     }
 
     fn resolve_url(&self, vhost: &str, path: &str) -> String {

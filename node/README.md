@@ -109,13 +109,98 @@ independent game-level record. Do not put an all-time leaderboard in
 it will be visible from a newly allocated room or runtime version.
 
 For match results, emit Result Units and verify the host's archive acceptance.
-The Gamecreator Archive has result queries for trusted platform services, but
-the Server SDK does not expose a general game-facing leaderboard query API.
-The current Gamecreator game-server contract therefore has no general
-cross-room, cross-release persistence-and-query API for game-owned rankings or
-progression. Use a separately supported game-level service only when the
-target environment explicitly provides one; otherwise this needs a platform
-storage/query capability, not another room-local table.
+The Archive result-query API remains reserved for trusted platform services;
+Result Units are not directly queryable by game code. The current Server SDK
+source separately includes the opt-in `platform.data` document API described
+below. Its Gamecreator host gate is off by default, and this API does not
+provide general Result Unit queries or arbitrary analytics.
+
+## Explicit game-owned data (Game Data protocol v1)
+
+The Server SDK source exposes `PlatformClient.data` for explicitly authored
+JSON records shared across rooms and runtime releases of the same game and full
+environment. The Gamecreator host gate `GAME_DATA_STORE_ENABLED` is off by
+default; an SDK method existing is not a production availability promise.
+`DataPlugin` is separate and remains disabled. The host—not the game request,
+browser, room ID, or runtime version—derives the game/environment scope from
+verified room admission. Public, preview, and sandbox environments, as well as
+dev, test, and production deployments, are isolated.
+
+This is forward-only. Only values that game code explicitly writes are stored;
+there is no automatic copy of Room SQLite, snapshots, KV, old Result Units,
+Blackjack results, legacy client-reported boards, profiles, principals, or R2
+replays. A `platform.data` call and a Room transition are separate Durable
+Object operations: they are not atomic and the callback is not a durable
+outbox. Use deterministic idempotency keys and retry only the identical
+payload after transient failures. Exact committed-transition mirroring is not
+available in this stage.
+
+```ts
+import { PlatformClient } from "@randseed/server-sdk";
+
+const data = new PlatformClient().data;
+await data.registerSchema("seasonScores", {
+  version: 1,
+  fields: { season: "number", score: "number", label: "string" },
+  indexes: ["score"],
+  compoundIndexes: [["season", "score"]],
+});
+
+const prior = await data.get("seasonScores", "player-summary");
+await data.put({
+  idempotencyKey: "match-42/player-summary",
+  collection: "seasonScores",
+  id: "player-summary",
+  expectedRevision: prior?.revision ?? 0,
+  value: { season: 2026, score: 1200, label: "final" },
+});
+const page = await data.query({
+  collection: "seasonScores",
+  where: [{ field: "season", op: "eq", value: 2026 }],
+  orderBy: { field: "score", direction: "desc" },
+  limit: 50,
+});
+```
+
+The compound query above requires the declared ordered pair
+`["season", "score"]`; it supports one equality filter on `season`, then
+ascending or descending ordering on `score`. A document ID is the stable tie
+breaker. Same-field queries use a declared single-field index; an unfiltered
+query can list by document ID. Other cross-field predicates/orderings, multiple
+filters, joins, offsets, arbitrary SQL, and unbounded scans are explicitly
+unsupported. Aggregates are limited to `count`, `sum`, `min`, `max`, and `avg`
+over a declared numeric field, with at most one single-index filter and an
+explicit scan limit of at most 1,000. Unsupported plans and exceeded bounds
+return errors rather than falling back to a scan. Aggregates exactly accumulate
+stored binary64 values and round the final result to nearest-even; unsafe integer
+results return an error. JSON integers outside the JavaScript safe-integer range
+are rejected; Node also rejects non-finite numbers and negative zero before
+sending.
+
+Writes use revision-based compare-and-swap and tombstones; recreating a deleted
+record must use its tombstone revision. `mutate` applies at most 25 unique
+records atomically within one request. Repeating an idempotency key with the
+same payload returns its original receipt; changing that payload conflicts.
+Schema upgrades are additive, and old releases may re-register their unchanged
+schema; new sparse fields must not break old writers. Do not newly index a
+previously unindexed string field, because the index length bound could reject
+old values. Consult the [Game Data v1 protocol](../protocol/game-data-v1.md)
+for exact wire fields, errors, compatibility rules, and quotas.
+
+The service caps each document at 64 KiB, a write request at 512 KiB, query
+pages at 100, collections at 32 per game/environment scope, fields at 32 per
+collection, single and compound indexes at 16 each per collection, live records
+at 8,192 per scope, stored records including tombstones at 16,384 per scope,
+and live serialized data at 128 MiB per scope. Archive-wide across environments,
+it caps declared indexes at 128 and normalized query-index entries at 16,384.
+It retains at most 4,096 idempotency receipts per scope for 30 days and 4,096
+pagination cursors per scope for 15 minutes. Rate is 120 requests per room per
+minute, with at most 10,000 tracked rooms per scope. These caps are part of the
+contract, not target capacity guarantees.
+
+TypeScript throws `PlatformDataError` with HTTP `status`, sanitized stable
+`code`, and `retryable`; branch on the code rather than message text. Do not
+retry conflicts, invalid inputs, or unsupported query shapes.
 
 ## Result Units
 
@@ -187,13 +272,10 @@ project's `package.json`, or use an `.mjs` entry point.
 ## Additional APIs
 
 - `PlatformClient` calls the documented room platform virtual hosts.
-  `getPlayers()` returns online room members with optional public `displayName`
-  and platform-hosted `avatarUrl` fields, and may include `isGameCreator` to
-  indicate whether a player owns the game for the current room. Missing profile
-  fields and unavailable ownership information remain absent. These values are
-  platform-supplied metadata, not authorization evidence; validate ownership
-  and permissions independently before protected operations. Game servers must
-  not use client-submitted names or avatars as authenticated data.
+  `getPlayers()` exposes only connected players’ game-scoped opaque `playerId`
+  and `joinedAt`. Profile, principal, account, and ownership metadata are not
+  available to game code, including when a legacy host includes them in its
+  response. Display profiles belong in the trusted Player Shell.
 - `ChaCha20Rng`, `deriveSeed`, and `deriveSeedHex` provide deterministic 20-round
   ChaCha20 simulation randomness (matching `rand_chacha::ChaCha20Rng`) seeded
   from the host-injected 256-bit VRF root seed (`options.randomSeed`), with

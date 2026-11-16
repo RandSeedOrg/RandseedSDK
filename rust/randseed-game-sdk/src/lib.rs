@@ -9,6 +9,7 @@ pub mod agent_capabilities;
 pub mod agent_observation;
 pub mod agent_player_view;
 pub mod errors;
+pub mod game_data;
 pub mod platform;
 pub mod prng;
 pub mod replay;
@@ -30,6 +31,13 @@ pub use agent_player_view::{
     MAX_AGENT_PLAYER_VIEW_BYTES,
 };
 pub use errors::{SdkError, SdkErrorCode};
+pub use game_data::{
+    GameDataAggregate, GameDataAggregateMetric, GameDataAggregateOperator, GameDataAggregateResult,
+    GameDataClient, GameDataFieldType, GameDataFilter, GameDataFilterOperator, GameDataMutation,
+    GameDataQuery, GameDataQueryResult, GameDataRecord, GameDataSchema, GameDataSort,
+    GameDataSortDirection, GameDataWriteReceipt, GameDataWriteReceiptItem, GameDataWriteRequest,
+    GAME_DATA_PROTOCOL_VERSION,
+};
 pub use platform::{PlatformClient, PlayerInfo};
 pub use prng::{
     derive_seed, derive_seed_hex, derive_seed_strs, encode_seed_hex, is_valid_seed_hex,
