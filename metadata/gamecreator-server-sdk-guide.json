@@ -31,6 +31,10 @@
       "description": "Node.js and Rust support Session Stream v1 with checkpoint hydration, contiguous ticks, deterministic replay, and action results. Keep seats, hands, turns, and timers in authoritative state so a reconnect can recover the current match."
     },
     {
+      "name": "Cross-release data continuity",
+      "description": "On Gamecreator, PlatformClient SQL is per-Room DO and KV is ephemeral. Neither is an all-time game store; Result Unit queries are internal. No general cross-release game-data query API is exposed to room servers."
+    },
+    {
       "name": "Disconnect behavior",
       "description": "A leave can be a temporary disconnect and a join can be a reconnect. Implement seat retention, waiting, timeouts, and forfeits in game rules; the server SDK does not configure a general per-player disconnect wait."
     },

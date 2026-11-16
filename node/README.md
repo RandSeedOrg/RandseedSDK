@@ -78,6 +78,45 @@ requires the active roster, each step must advance one contiguous tick, and
 per-player views are matched exactly to the active seats with no canonical-state
 fallback. `actionResults` are returned in `stepResult` and in replay hydration.
 
+## Data continuity across releases
+
+The callback `state`, session checkpoints, and between-match carryover support
+recovery of the room and runtime version that produced them; they are not an
+all-time game database. On RandSeed, rooms are pinned to a game, environment,
+and runtime version. Activating a new runtime version does not automatically
+copy the old room state into the new version. In particular, do not implement
+all-time rankings, progression, or inventory only in room state, a bounded
+`roundHistory`, browser memory, or `persistentTable` carryover.
+
+Use an explicitly durable game-level store with stable game/player keys and
+documented cross-release retention. Version its stored schema separately from
+the runtime release, and implement/test migrations or backfills when its
+meaning or shape changes. A bug-fix deployment should preserve historical
+rankings when their metric meaning is unchanged; if the ranking is intentionally
+per-version or per-season, make that scope explicit in its key and UI.
+
+The game owns its data schema and can read back records through a storage API,
+but the API must have the right scope. On the current Gamecreator host,
+`PlatformClient.sql` reads and writes the active GameRoom Durable Object's SQL
+database; it is room-scoped, not a database shared by every room for the game.
+`kvGet`/`kvPut` use an in-memory map belonging to that room and are not durable
+across room-object restarts. These methods are suitable only for data whose
+lifetime is intentionally limited to that room.
+
+`persist: true` requests room-state snapshotting; it does not write an
+independent game-level record. Do not put an all-time leaderboard in
+`PlatformClient.sql`, `PlatformClient` KV, room state, or carryover and assume
+it will be visible from a newly allocated room or runtime version.
+
+For match results, emit Result Units and verify the host's archive acceptance.
+The Gamecreator Archive has result queries for trusted platform services, but
+the Server SDK does not expose a general game-facing leaderboard query API.
+The current Gamecreator game-server contract therefore has no general
+cross-room, cross-release persistence-and-query API for game-owned rankings or
+progression. Use a separately supported game-level service only when the
+target environment explicitly provides one; otherwise this needs a platform
+storage/query capability, not another room-local table.
+
 ## Result Units
 
 Declare versioned result-unit types and metric aggregations in the manifest,
@@ -132,6 +171,14 @@ shape and size; the trusted room host must additionally validate the published
 definition version, active match, authenticated roster, durable delivery, and
 Archive idempotency. Use stable event IDs across retries. The SDK does not
 persist or deliver results and does not provide statistics queries.
+`resultDefinition.version` versions the meaning/schema of result metrics; it is
+not the game release or runtime version. Keep it stable for bug fixes that do
+not change metric meaning. When its meaning changes, plan how readers will
+combine or migrate the old and new result series. Never assume that emitting a
+Result Unit creates a cross-version leaderboard. The game can query archived
+results only if the target platform exposes an authorized Archive query API;
+otherwise, write a durable game-level projection through an available storage
+service and read it back there.
 
 For TypeScript, import `type GameServer` from the same package and declare
 `const game: GameServer<State> = ...`. Set `"type": "module"` in a JavaScript
