@@ -61,6 +61,21 @@ this repository.
 - **Host-mediated room services** in Node.js and Rust through `PlatformClient`:
   SQL, key-value storage, broadcasts, direct messages, and online player data.
 
+### Where to find the concrete interfaces
+
+The route list below describes how the room host calls a game server. The
+following table maps capabilities to the interfaces game code implements or
+calls:
+
+| Capability | Interface used by game code |
+| --- | --- |
+| Room lifecycle (all five languages) | Implement `GameServer` in [Node.js](./node/README.md), [`roomhost.GameServer`](./go/README.md), [`GameServer`](./rust/randseed-game-sdk/README.md), [`IGameServer`](./dotnet/README.md), or [`randseed::Game`](./cpp/README.md). These provide the manifest, init, tick, join/leave, game-over, and trusted-command callbacks. |
+| Deterministic randomness (all five) | Read the host-injected `options.randomSeed`, then use `ChaCha20Rng` and `deriveSeed` (language naming varies). This is a library API, **not an HTTP VRF endpoint**: the platform obtains and injects the VRF seed; game code does not call the VRF canister through this SDK. |
+| Session Stream (Node.js, Rust) | WebSocket `/stream` with `hydrate` and `step`; game tick results may include `actionResults`. See [Session Stream v1](./protocol/session-stream-v1.md). |
+| Result Units (all five) | Declare `resultDefinition` in the manifest and return `resultUnits` from lifecycle callbacks. They emit validated result events; they are not a results query API. |
+| Agent integration (Node.js, Rust) | Optional `GameServer` callbacks and `/agent/capabilities`, `/agent/player-contract`, and `/agent/player-view`. These are host-facing contracts, not direct player APIs. |
+| Room services (Node.js, Rust) | `PlatformClient`: `sql`, `kvGet`/`kvPut`/`kvDelete`, `broadcast`, `send`, and `getPlayers`. These call host-provided room services; their storage scope is described below. |
+
 ## Room-host protocol
 
 All server SDKs implement the shared HTTP/JSON room lifecycle:
@@ -70,7 +85,7 @@ All server SDKs implement the shared HTTP/JSON room lifecycle:
 | `GET /manifest` | Game metadata, options schema, player-view mode, and Result Unit definitions. |
 | `GET /health` | Server health and runtime identity. |
 | `POST /init` | Initialize a match from host-authenticated players and options. |
-| `POST /tick` | Apply one authoritative tick of player inputs and trusted commands. |
+| `POST /tick` | Apply one authoritative tick using host-supplied inputs, commands, and elapsed match time. |
 | `POST /onPlayerJoin` / `POST /onPlayerLeave` | Update game state for joins, reconnects, and departures. |
 | `POST /isGameOver` | Evaluate terminal state, summary, and next-match policy. |
 | `POST /onCommand` | Apply a trusted room-host command. |
@@ -78,6 +93,22 @@ All server SDKs implement the shared HTTP/JSON room lifecycle:
 | `GET /agent/capabilities` (optional, Node.js/Rust) | Declare supported Agent protocols and modes. |
 | `GET /agent/player-contract` (optional, Node.js/Rust) | Declare per-seat Agent view and action schemas. |
 | `POST /agent/player-view` (optional, Node.js/Rust) | Produce a recipient-specific view for the trusted host. |
+
+### Tick and command callbacks
+
+The `/tick` callback receives the current state and a host-generated context:
+`tick` is the non-negative tick number, `inputs` contains each player's JSON
+`data` (and optional epoch-millisecond `timestamp`), `commands` contains
+trusted host commands, and `elapsedSeconds` is cumulative match time derived
+from host ticks. Use this supplied context rather than wall-clock time or
+process-global match state. When returning per-player views, the request
+includes the active `players` roster so the SDK can validate exact coverage.
+
+Trusted commands use the separate `/onCommand` callback; they are not player
+inputs. Tick and command callbacks return the updated state and may also return
+broadcasts, private player views, joinability changes, and completed Result
+Units. For the exact request and response shapes, see the
+[Room Host Protocol](./protocol/room-host-v1.md#tick).
 
 Configure integer limits satisfying `1 <= minPlayers <= maxPlayers <= 100`.
 `minPlayers` is the assigned-player threshold at which the RandSeed platform
