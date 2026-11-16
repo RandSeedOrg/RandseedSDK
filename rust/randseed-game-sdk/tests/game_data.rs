@@ -14,10 +14,19 @@ async fn game_data_v1_uses_versioned_shapes_and_sanitized_errors() {
             assert_eq!(body["protocolVersion"], 1);
             assert_eq!(body["request"]["schema"]["compoundIndexes"][0][0], "season");
             assert_eq!(body["request"]["schema"]["compoundIndexes"][0][1], "score");
+            if body["request"]["collection"] == "missing-data" {
+                return (axum::http::StatusCode::OK, Json(json!({"success": true})));
+            }
             (axum::http::StatusCode::OK, Json(json!({"success": true, "data": {"registered": true}})))
         }))
         .route("/platform.data/get", post(|Json(body): Json<Value>| async move {
             assert_eq!(body["protocolVersion"], 1);
+            if body["request"]["id"] == "missing-data" {
+                return (axum::http::StatusCode::OK, Json(json!({"success": true})));
+            }
+            if body["request"]["id"] == "null-data" {
+                return (axum::http::StatusCode::OK, Json(json!({"success": true, "data": null})));
+            }
             (axum::http::StatusCode::OK, Json(json!({"success": true, "data": {"id": body["request"]["id"], "value": {"score": 7}, "revision": 3, "deleted": false}})))
         }))
         .route("/platform.data/mutate", post(|Json(body): Json<Value>| async move {
@@ -57,7 +66,7 @@ async fn game_data_v1_uses_versioned_shapes_and_sanitized_errors() {
     let mut map = HashMap::new();
     map.insert(
         "platform.data".to_owned(),
-        format!("{}/platform.data", base),
+        format!("{}/platform.data/", base),
     );
     let data = PlatformClient::with_vhost_map(map).data();
     let schema = GameDataSchema {
@@ -70,6 +79,22 @@ async fn game_data_v1_uses_versioned_shapes_and_sanitized_errors() {
         compound_indexes: vec![["season".to_owned(), "score".to_owned()]],
     };
     data.register_schema("scores", &schema).await.unwrap();
+    let missing_data = data.get("scores", "missing-data").await.unwrap_err();
+    assert!(
+        matches!(missing_data, SdkError::PlatformData { status: 200, ref code } if code == "GAME_DATA_INVALID_RESPONSE")
+    );
+    assert!(
+        data.get("scores", "null-data").await.unwrap().is_none(),
+        "an explicit null data member remains valid for a missing record"
+    );
+    let missing_schema_data = data
+        .register_schema("missing-data", &schema)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(missing_schema_data, SdkError::PlatformData { status: 200, ref code } if code == "GAME_DATA_INVALID_RESPONSE")
+    );
+
     let record = data.get("scores", "alice").await.unwrap().unwrap();
     assert_eq!(record.revision, 3);
     let receipt = data

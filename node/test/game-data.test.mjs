@@ -4,7 +4,7 @@ import { PlatformClient, PlatformDataError } from '../dist/index.js';
 
 test('platform.data v1 covers schema, CAS receipts, indexed queries, and bounded aggregates', async () => {
   const calls = [];
-  const client = new PlatformClient({ vhostMap: { 'platform.data': 'http://data.test' }, fetch: async (url, init) => {
+  const client = new PlatformClient({ vhostMap: { 'platform.data': 'http://data.test/' }, fetch: async (url, init) => {
     const request = JSON.parse(init.body);
     calls.push({ url: String(url), request });
     const operation = new URL(String(url)).pathname.slice(1);
@@ -46,6 +46,19 @@ test('platform.data enforces bounds and turns service failures into sanitized er
   });
 });
 
+
+test("platform.data rejects missing success data but accepts explicit null data", async () => {
+  const envelope = { success: true };
+  const client = new PlatformClient({ fetch: async () => ({ ok: true, status: 200, json: async () => envelope }) });
+  await assert.rejects(client.data.get("scores", "alice"), error => {
+    assert.ok(error instanceof PlatformDataError);
+    assert.equal(error.status, 200);
+    assert.equal(error.code, "GAME_DATA_INVALID_RESPONSE");
+    return true;
+  });
+  envelope.data = null;
+  assert.equal(await client.data.get("scores", "alice"), null);
+});
 
 test('platform.data rejects non-finite and unsafe integer numbers before fetch and preserves stored values', async () => {
   const records = new Map();

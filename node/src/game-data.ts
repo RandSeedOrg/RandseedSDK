@@ -54,7 +54,7 @@ export class PlatformDataClient {
   }
   private async call<T>(operation: string, request: object): Promise<T> {
     assertJsonNumbers(request);
-    const base = this.vhostMap['platform.data'] || 'http://platform.data';
+    const base = (this.vhostMap["platform.data"] || "http://platform.data").replace(/\/+$/, "");
     const response = await this.customFetch(base + '/' + operation, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocolVersion: GAME_DATA_PROTOCOL_VERSION, request }) });
     let payload: unknown;
     try { payload = await response.json(); } catch { payload = null; }

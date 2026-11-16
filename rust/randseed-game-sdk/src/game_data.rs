@@ -238,6 +238,14 @@ impl GameDataClient {
             let code = safe_error_code(payload.get("code").and_then(Value::as_str));
             return Err(SdkError::PlatformData { status, code });
         }
+        if payload.get("success").and_then(Value::as_bool) == Some(true)
+            && payload.get("data").is_none()
+        {
+            return Err(SdkError::PlatformData {
+                status,
+                code: "GAME_DATA_INVALID_RESPONSE".into(),
+            });
+        }
         let envelope: ResponseEnvelope<T> =
             serde_json::from_value(payload).map_err(|_| SdkError::PlatformData {
                 status,
