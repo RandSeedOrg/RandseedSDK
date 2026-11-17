@@ -41,6 +41,14 @@ own GitHub App to notify Gamecreator. Gamecreator fetches the guide data and
 opens a pull request only when the displayed data changes. No PAT is stored in
 this repository.
 
+As of 2026-11-17, the general private-view alignment in this source tree is
+pending independent review and is not a new SDK release. Gamecreator PR #340
+remains open and is not deployed; production availability is not implied by
+this repository branch. The current install commands and released Go/Rust
+artifacts do not provide this pending implementation until the corresponding
+changes are merged or released. Verify the SDK artifact and target host rollout
+before enabling private routing.
+
 ## Server SDK capabilities
 
 - **Authoritative multiplayer lifecycle** across Node.js/TypeScript, Go, Rust,
@@ -51,8 +59,10 @@ this repository.
   `Mulberry32` retained for legacy compatibility.
 - **Stateful low-latency sessions** with checkpoint hydration and deterministic
   replay in the Node.js and Rust SDKs.
-- **Per-seat private views and action receipts** in Node.js and Rust, with
-  fail-closed roster coverage and no fallback to canonical state.
+- **Room-host private per-seat views** in Node.js, Rust, and Go, with exact
+  roster coverage, fail-closed validation, and no canonical-state fallback. Go
+  support is HTTP lifecycle only; it does not add `/stream` or Agent APIs.
+- **Agent contracts and action receipts** remain Node.js and Rust capabilities.
 - **Versioned Result Units and metrics** for round, stage, and match outcomes.
 - **Structured failures** in Node.js and Rust with stable error codes,
   retryability, and sanitized callback errors.
@@ -116,9 +126,9 @@ may start a match; `maxPlayers` is the room's seat capacity, not a required
 fill target. If the roster must be a fixed size, set both values to that size.
 A zero-player start is unsupported; a solo game uses `minPlayers: 1`.
 Additional players can join after startup only while the game reports
-`joinable: true` and seats remain below `maxPlayers`. Node.js, Rust, and .NET
-SDKs enforce manifest roster bounds at `/init`; Go and C++ currently validate
-only generic roster constraints. Gamecreator also enforces manifest bounds
+`joinable: true` and seats remain below `maxPlayers`. Node.js, Rust, Go, and .NET
+SDKs enforce manifest roster bounds at `/init`; C++ currently validates only
+generic roster constraints. Gamecreator also enforces manifest bounds
 platform-side; the platform owns matchmaking and startup timing. This start
 threshold is separate from `wait_for_ready`, which coordinates the
 existing roster between completed and next matches.
@@ -150,9 +160,12 @@ game-facing query API. Use only a game-level service explicitly documented by
 the target host for cross-release data.
 
 Read the [version 1 protocol](./protocol/room-host-v1.md). Every language
-implementation in this repository is tested against the same
-[wire fixture](./protocol/fixtures/room-host-v1.json), including deterministic
-`ChaCha20Rng`, `deriveSeed`, and legacy `Mulberry32` test vectors. Result Unit declarations and events are also validated
+implementation in this repository is tested against the shared
+[room-host fixture](./protocol/fixtures/room-host-v1.json), including
+deterministic `ChaCha20Rng`, `deriveSeed`, and legacy `Mulberry32` vectors.
+Node.js, Rust, and Go also validate the same
+[private-view vectors](./protocol/fixtures/room-host-private-v1.json). Result Unit
+declarations and events are also validated
 against the shared [Result Unit fixture](./protocol/fixtures/game-result-event-v1.json).
 Stateful WebSocket recovery and action receipt behavior follow
 [`Session Stream v1`](./protocol/session-stream-v1.md) and its shared

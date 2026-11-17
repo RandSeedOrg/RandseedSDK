@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+func validPlatformGameID(gameID string) bool {
+	if len(gameID) == 0 || len(gameID) > 64 {
+		return false
+	}
+	for _, char := range gameID {
+		if !(char >= 97 && char <= 122 || char >= 65 && char <= 90 || char >= 48 && char <= 57 || char == 95 || char == 45) {
+			return false
+		}
+	}
+	return true
+}
+
 const (
 	// DefaultPort is the port used by ListenAndServe.
 	DefaultPort = 8080
@@ -24,6 +36,7 @@ type HandlerOptions struct {
 
 type httpHandler struct {
 	server    GameServer
+	serverV1  GameServerV1
 	gameID    string
 	startedAt time.Time
 }
@@ -43,11 +56,29 @@ func NewHandlerWithOptions(server GameServer, options HandlerOptions) http.Handl
 			}
 		}
 	}
-	return &httpHandler{
-		server:    server,
-		gameID:    gameID,
-		startedAt: time.Now(),
+	return newHandler(server, nil, options, gameID)
+}
+
+// NewHandlerV1 serves an opt-in GameServerV1 while preserving GameServer APIs.
+func NewHandlerV1(server GameServerV1) http.Handler {
+	return NewHandlerV1WithOptions(server, HandlerOptions{})
+}
+
+// NewHandlerV1WithOptions serves an opt-in GameServerV1 with handler options.
+func NewHandlerV1WithOptions(server GameServerV1, options HandlerOptions) http.Handler {
+	gameID := options.GameID
+	if gameID == "" {
+		if provider, ok := server.(GameIDProvider); ok {
+			if providedID, err := safeValue(provider.GameID); err == nil {
+				gameID = providedID
+			}
+		}
 	}
+	return newHandler(nil, server, options, gameID)
+}
+
+func newHandler(server GameServer, serverV1 GameServerV1, _ HandlerOptions, gameID string) http.Handler {
+	return &httpHandler{server: server, serverV1: serverV1, gameID: gameID, startedAt: time.Now()}
 }
 
 // ListenAndServe starts the room-host HTTP server on the default port, 8080.
@@ -61,6 +92,17 @@ func ListenAndServeWithOptions(server GameServer, options HandlerOptions) error 
 	return http.ListenAndServe(address, NewHandlerWithOptions(server, options))
 }
 
+// ListenAndServeV1 serves an opt-in GameServerV1 on port 8080.
+func ListenAndServeV1(server GameServerV1) error {
+	return ListenAndServeV1WithOptions(server, HandlerOptions{})
+}
+
+// ListenAndServeV1WithOptions serves an opt-in GameServerV1 with handler options.
+func ListenAndServeV1WithOptions(server GameServerV1, options HandlerOptions) error {
+	address := ":" + strconv.Itoa(DefaultPort)
+	return http.ListenAndServe(address, NewHandlerV1WithOptions(server, options))
+}
+
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/manifest":
@@ -72,10 +114,14 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !h.requireMethod(w, r, http.MethodGet) {
 			return
 		}
+		if !validPlatformGameID(h.gameID) {
+			writeError(w, http.StatusServiceUnavailable, "the platform RANDSEED_GAME_ID is unavailable or invalid")
+			return
+		}
 		h.writeJSON(w, http.StatusOK, struct {
-			Status  string  `json:"status"`
-			GameID  string  `json:"gameId"`
-			Uptime  float64 `json:"uptime"`
+			Status string  `json:"status"`
+			GameID string  `json:"gameId"`
+			Uptime float64 `json:"uptime"`
 		}{
 			Status: "ok",
 			GameID: h.gameID,
@@ -125,17 +171,30 @@ func (h *httpHandler) requireMethod(w http.ResponseWriter, r *http.Request, meth
 	return false
 }
 
-func (h *httpHandler) serveManifest(w http.ResponseWriter) {
+func (h *httpHandler) getValidManifest() (GameManifestV1, bool) {
+	if h.serverV1 != nil {
+		manifest, err := safeValue(h.serverV1.ManifestV1)
+		return manifest, err == nil && validManifestV1(manifest)
+	}
 	if h.server == nil {
-		writeInternalError(w)
-		return
+		return GameManifestV1{}, false
 	}
 	manifest, err := safeValue(h.server.Manifest)
-	if err != nil || !validManifest(manifest) {
+	wrapped := GameManifestV1{GameManifest: manifest}
+	return wrapped, err == nil && validManifest(manifest)
+}
+
+func (h *httpHandler) serveManifest(w http.ResponseWriter) {
+	manifest, ok := h.getValidManifest()
+	if !ok {
 		writeInternalError(w)
 		return
 	}
-	h.writeJSON(w, http.StatusOK, manifest)
+	if h.serverV1 != nil {
+		h.writeJSON(w, http.StatusOK, manifest)
+	} else {
+		h.writeJSON(w, http.StatusOK, manifest.GameManifest)
+	}
 }
 
 func (h *httpHandler) serveInit(w http.ResponseWriter, r *http.Request) {
@@ -148,14 +207,33 @@ func (h *httpHandler) serveInit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid match configuration")
 		return
 	}
-	if h.server == nil {
+	manifest, ok := h.getValidManifest()
+	if !ok {
 		writeInternalError(w)
 		return
 	}
-	result, err := safeCall(func() (InitResult, error) {
-		return h.server.Init(r.Context(), config)
-	})
-	if err != nil || !validInitResult(result) {
+	if len(config.Players) < manifest.MinPlayers || len(config.Players) > manifest.MaxPlayers {
+		writeError(w, http.StatusBadRequest, "players must satisfy the game manifest roster limits")
+		return
+	}
+	playersSnapshot := clonePlayers(config.Players)
+	callbackConfig := config
+	callbackConfig.Players = clonePlayers(playersSnapshot)
+	var result InitResultV1
+	var err error
+	if h.serverV1 != nil {
+		result, err = safeCall(func() (InitResultV1, error) {
+			return h.serverV1.InitV1(r.Context(), callbackConfig)
+		})
+	} else if h.server != nil {
+		var legacy InitResult
+		legacy, err = safeCall(func() (InitResult, error) { return h.server.Init(r.Context(), callbackConfig) })
+		result = InitResultV1{State: legacy.State, Broadcasts: legacy.Broadcasts, ResultUnits: legacy.ResultUnits}
+	} else {
+		writeInternalError(w)
+		return
+	}
+	if err != nil || !validInitResultV1ForRoster(result, playersSnapshot, true, manifest.PlayerViewMode == PlayerViewPrivate) {
 		writeInternalError(w)
 		return
 	}
@@ -163,7 +241,7 @@ func (h *httpHandler) serveInit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *httpHandler) serveTick(w http.ResponseWriter, r *http.Request) {
-	var request TickRequest
+	var request TickRequestV1
 	data, ok := h.decodeRequest(w, r, &request)
 	if !ok {
 		return
@@ -172,17 +250,48 @@ func (h *httpHandler) serveTick(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid tick request")
 		return
 	}
-	if request.Ctx.Commands == nil {
-		request.Ctx.Commands = []Command{}
-	}
-	if h.server == nil {
+	manifest, ok := h.getValidManifest()
+	if !ok {
 		writeInternalError(w)
 		return
 	}
-	result, err := safeCall(func() (TickResult, error) {
-		return h.server.Tick(r.Context(), request)
-	})
-	if err != nil || !validTickResult(result) {
+	rosterValid, rosterPresent := validRequestRoster(data, request.Players,
+		manifest.PlayerViewMode == PlayerViewPrivate, manifest.MaxPlayers, true)
+	if !rosterValid {
+		writeError(w, http.StatusBadRequest, "players must include the active roster for private views")
+		return
+	}
+	playersSnapshot := clonePlayers(request.Players)
+	if rosterPresent {
+		for _, input := range request.Ctx.Inputs {
+			if !playersContain(playersSnapshot, input.PlayerID) {
+				writeError(w, http.StatusBadRequest, "input playerId must belong to the active roster")
+				return
+			}
+		}
+	}
+	if request.Ctx.Commands == nil {
+		request.Ctx.Commands = []Command{}
+	}
+	callbackRequest := request
+	callbackRequest.Players = clonePlayers(playersSnapshot)
+	var result TickResultV1
+	var err error
+	if h.serverV1 != nil {
+		result, err = safeCall(func() (TickResultV1, error) {
+			return h.serverV1.TickV1(r.Context(), callbackRequest)
+		})
+	} else if h.server != nil {
+		var legacy TickResult
+		legacy, err = safeCall(func() (TickResult, error) {
+			return h.server.Tick(r.Context(), TickRequest{Ctx: request.Ctx, State: request.State})
+		})
+		result = TickResultV1{State: legacy.State, Broadcasts: legacy.Broadcasts, Persist: legacy.Persist, ResultUnits: legacy.ResultUnits}
+	} else {
+		writeInternalError(w)
+		return
+	}
+	if err != nil || !validTickResultV1ForRoster(result, playersSnapshot, rosterPresent, manifest.PlayerViewMode == PlayerViewPrivate) {
 		writeInternalError(w)
 		return
 	}
@@ -190,7 +299,7 @@ func (h *httpHandler) serveTick(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *httpHandler) servePlayerEvent(w http.ResponseWriter, r *http.Request, joining bool) {
-	var request PlayerEventRequest
+	var request PlayerEventRequestV1
 	data, ok := h.decodeRequest(w, r, &request)
 	if !ok {
 		return
@@ -199,24 +308,53 @@ func (h *httpHandler) servePlayerEvent(w http.ResponseWriter, r *http.Request, j
 		writeError(w, http.StatusBadRequest, "invalid player event request")
 		return
 	}
-	if h.server == nil {
+	manifest, ok := h.getValidManifest()
+	if !ok {
 		writeInternalError(w)
 		return
 	}
-	var (
-		result PlayerEventResult
-		err    error
-	)
-	if joining {
-		result, err = safeCall(func() (PlayerEventResult, error) {
-			return h.server.OnPlayerJoin(r.Context(), request)
-		})
-	} else {
-		result, err = safeCall(func() (PlayerEventResult, error) {
-			return h.server.OnPlayerLeave(r.Context(), request)
-		})
+	rosterValid, rosterPresent := validRequestRoster(data, request.Players,
+		manifest.PlayerViewMode == PlayerViewPrivate, manifest.MaxPlayers, true)
+	if !rosterValid {
+		writeError(w, http.StatusBadRequest, "players must include the resulting roster for private views")
+		return
 	}
-	if err != nil || !validPlayerEventResult(result) {
+	if rosterPresent && playersContain(request.Players, request.PlayerID) != joining {
+		writeError(w, http.StatusBadRequest, "players must describe the resulting join or leave roster")
+		return
+	}
+	playersSnapshot := clonePlayers(request.Players)
+	callbackRequest := request
+	callbackRequest.Players = clonePlayers(playersSnapshot)
+	var result PlayerEventResultV1
+	var err error
+	if h.serverV1 != nil {
+		if joining {
+			result, err = safeCall(func() (PlayerEventResultV1, error) {
+				return h.serverV1.OnPlayerJoinV1(r.Context(), callbackRequest)
+			})
+		} else {
+			result, err = safeCall(func() (PlayerEventResultV1, error) {
+				return h.serverV1.OnPlayerLeaveV1(r.Context(), callbackRequest)
+			})
+		}
+	} else if h.server != nil {
+		var legacy PlayerEventResult
+		if joining {
+			legacy, err = safeCall(func() (PlayerEventResult, error) {
+				return h.server.OnPlayerJoin(r.Context(), PlayerEventRequest{PlayerID: request.PlayerID, State: request.State})
+			})
+		} else {
+			legacy, err = safeCall(func() (PlayerEventResult, error) {
+				return h.server.OnPlayerLeave(r.Context(), PlayerEventRequest{PlayerID: request.PlayerID, State: request.State})
+			})
+		}
+		result = PlayerEventResultV1{State: legacy.State, Broadcasts: legacy.Broadcasts, ResultUnits: legacy.ResultUnits}
+	} else {
+		writeInternalError(w)
+		return
+	}
+	if err != nil || !validPlayerEventResultV1ForRoster(result, playersSnapshot, rosterPresent, manifest.PlayerViewMode == PlayerViewPrivate) {
 		writeInternalError(w)
 		return
 	}
@@ -233,13 +371,17 @@ func (h *httpHandler) serveIsGameOver(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid game-over request")
 		return
 	}
-	if h.server == nil {
+	if h.server == nil && h.serverV1 == nil {
 		writeInternalError(w)
 		return
 	}
-	result, err := safeCall(func() (GameResult, error) {
-		return h.server.IsGameOver(r.Context(), request)
-	})
+	var result GameResult
+	var err error
+	if h.serverV1 != nil {
+		result, err = safeCall(func() (GameResult, error) { return h.serverV1.IsGameOverV1(r.Context(), request) })
+	} else {
+		result, err = safeCall(func() (GameResult, error) { return h.server.IsGameOver(r.Context(), request) })
+	}
 	if err != nil || !validGameResult(result) {
 		writeInternalError(w)
 		return
@@ -248,7 +390,7 @@ func (h *httpHandler) serveIsGameOver(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *httpHandler) serveCommand(w http.ResponseWriter, r *http.Request) {
-	var request CommandRequest
+	var request CommandRequestV1
 	data, ok := h.decodeRequest(w, r, &request)
 	if !ok {
 		return
@@ -257,14 +399,37 @@ func (h *httpHandler) serveCommand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid command request")
 		return
 	}
-	if h.server == nil {
+	manifest, ok := h.getValidManifest()
+	if !ok {
 		writeInternalError(w)
 		return
 	}
-	result, err := safeCall(func() (CommandResult, error) {
-		return h.server.OnCommand(r.Context(), request)
-	})
-	if err != nil || !validCommandResult(result) {
+	rosterValid, rosterPresent := validRequestRoster(data, request.Players,
+		manifest.PlayerViewMode == PlayerViewPrivate, manifest.MaxPlayers, true)
+	if !rosterValid {
+		writeError(w, http.StatusBadRequest, "players must include the active roster for private views")
+		return
+	}
+	playersSnapshot := clonePlayers(request.Players)
+	callbackRequest := request
+	callbackRequest.Players = clonePlayers(playersSnapshot)
+	var result CommandResultV1
+	var err error
+	if h.serverV1 != nil {
+		result, err = safeCall(func() (CommandResultV1, error) {
+			return h.serverV1.OnCommandV1(r.Context(), callbackRequest)
+		})
+	} else if h.server != nil {
+		var legacy CommandResult
+		legacy, err = safeCall(func() (CommandResult, error) {
+			return h.server.OnCommand(r.Context(), CommandRequest{Command: request.Command, State: request.State})
+		})
+		result = CommandResultV1{State: legacy.State, Broadcasts: legacy.Broadcasts, ResultUnits: legacy.ResultUnits}
+	} else {
+		writeInternalError(w)
+		return
+	}
+	if err != nil || !validCommandResultV1ForRoster(result, playersSnapshot, rosterPresent, manifest.PlayerViewMode == PlayerViewPrivate) {
 		writeInternalError(w)
 		return
 	}
@@ -318,6 +483,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 func writeInternalError(w http.ResponseWriter) {
 	writeError(w, http.StatusInternalServerError, "internal server error")
+}
+
+func clonePlayers(players []string) []string {
+	if players == nil {
+		return nil
+	}
+	return append([]string{}, players...)
 }
 
 func safeCall[T any](callback func() (T, error)) (value T, err error) {

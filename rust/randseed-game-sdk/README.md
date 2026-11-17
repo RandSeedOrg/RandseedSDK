@@ -40,7 +40,99 @@ randseed-game-sdk = { path = "../RandseedSDK/rust/randseed-game-sdk" }
 ```
 
 Adjust the path to match your checkout. The crate is not published to crates.io
-as part of this source preparation.
+as part of this source preparation. The private-view changes below are pending
+review; a checkout of the current default branch will not contain them until
+they are merged.
+
+## Private room-host player views
+
+Omit both `playerViewMode` and `playerViewSchemaVersion` for an ordinary
+public game. Set `player_view_mode: Some(PlayerViewMode::Private)` for the
+general room-host v1 private projection contract. The schema version defaults
+to v1 when omitted; explicit `1` is accepted only with private mode. `null`, an
+unsupported version, a version without private mode, a null mode, and
+`playerViewMode: "public"` are rejected. The Rust SDK serializes private
+manifests with explicit `playerViewSchemaVersion: 1`; it does this without
+adding a field to `GameManifest`, preserving existing downstream struct
+literals. A public manifest serializes with both private fields omitted.
+
+Public wire manifest:
+
+```json
+{
+  "title": "Room Counter",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false
+}
+```
+
+A valid `options_schema` is a JSON Schema object or boolean; the SDK checks
+its wire shape but does not evaluate it against match options. For example,
+add this to `GameManifest`:
+
+```rust
+options_schema: Some(serde_json::json!({
+    "type": "object",
+    "properties": { "mode": { "type": "string", "enum": ["casual", "ranked"] } },
+    "additionalProperties": false
+})),
+```
+
+Private wire manifest emitted by this SDK:
+
+```json
+{
+  "title": "Hidden Hand",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false,
+  "playerViewMode": "private",
+  "playerViewSchemaVersion": 1
+}
+```
+
+`/init` uses `MatchConfig.players`. Private `/tick` and `/onCommand` requests
+must include `players`; join and leave requests include the resulting roster,
+with the joining seat included and the leaving seat excluded. Request-context
+methods (`tick_ext`, `on_player_join_ext`, `on_player_leave_ext`, and
+`on_command_ext`) retain this validated roster. Return an exact
+`player_views` map on each state transition. The server validates exact roster
+coverage, JSON values, a 64 KiB limit per serialized view and a 1 MiB limit for
+the entire serialized map. Missing, malformed, missing-key, extra-key, or
+oversized projections fail closed.
+
+The returned `state` remains canonical and is visible only to the trusted Room
+host. Build each view for its recipient and exclude every opponent-private
+field, hidden random state, and other non-recipient secret. The host must route
+only the entry matching the authenticated recipient; never fall back to
+canonical state or another seat view. The SDK cannot infer whether a game
+callback classified every field correctly. Do not expose lifecycle endpoints
+to browsers.
+
+For deployment, `run_game_server` and `run_typed_game_server` read the actual
+platform-assigned RandSeed Game ID from `RANDSEED_GAME_ID`. Direct router
+callers pass that platform value to `create_game_router`; there is no invented
+fallback ID. IDs must match `^[A-Za-z0-9_-]{1,64}$`. The examples listen on
+`PORT` or `8080`, and bind `0.0.0.0`. Check both routes on the actual port:
+
+```sh
+curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8080/manifest
+```
+
+`/health` checks the process and valid platform Game ID; `/manifest`
+independently validates game configuration. A healthy process does not prove
+that the manifest is valid or that platform routing is enabled.
+
+As of 2026-11-17, this cross-SDK alignment is pending independent review and
+is not a published crate release. Gamecreator PR #340 remains open and is not
+deployed. Verify the SDK version and target host rollout before enabling
+private routing.
 
 ## Authoritative Agent player views
 

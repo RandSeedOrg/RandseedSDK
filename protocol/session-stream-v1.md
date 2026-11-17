@@ -38,9 +38,10 @@ The host starts or recovers one in-memory match with:
 ```
 
 `matchId`, `tickRateHz`, `tick`, `state`, and the active `players` roster are
-required. The roster must be unique and non-empty. A private-view manifest
-requires exactly one checkpoint view for every active seat when replay is
-empty. Each view is at most 64 KiB; the view map is at most 1 MiB. Limits use
+required. The roster must be unique; it may be empty when hydrating a checkpoint
+after the final player leaves. A private-view manifest requires exactly one
+checkpoint view for every active seat when replay is empty, including an
+explicit empty `playerViews` map for an empty roster. Each view is at most 64 KiB; the view map is at most 1 MiB. Limits use
 UTF-8 serialized JSON bytes for the complete map, including player ID keys and
 JSON syntax overhead. Never put another player's private fields in a
 recipient's view.
@@ -59,9 +60,12 @@ For each `step`, the server validates the tick, roster, inputs, and events
 before invoking game logic. It then invokes lifecycle events in array order
 (`join`, `leave`, or trusted `command`), invokes `tick` once, and evaluates
 `isGameOver` on the resulting state. Join is also used for reconnect; game
-callbacks should be idempotent for a player already in the roster. A leave must
-name an active player. Tick inputs may only name players in the resulting
-active roster.
+callbacks should be idempotent for a player already in the roster. The host
+retains assigned seats independently from this active roster; a disconnect
+removes the player from the active roster but does not release the seat, and a
+reconnect remains valid even when `joinable` is false. `joinable` gates only a
+new player identity. A leave must name an active player. Tick inputs may only
+name players in the resulting active roster.
 
 ```json
 {

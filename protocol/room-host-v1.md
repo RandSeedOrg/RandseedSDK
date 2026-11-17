@@ -30,6 +30,16 @@ The Agent player endpoints are host-to-container protocol operations. A browser
 must use the Player/Room gateway and must never submit canonical state or choose
 the recipient seat directly.
 
+In deployed containers, `gameId` is the platform-assigned RandSeed Game ID, not
+an SDK package name, repository name, runtime release, or a value guessed by
+the game. Valid IDs match `^[A-Za-z0-9_-]{1,64}$`. Node reads
+`RANDSEED_GAME_ID`; Rust runner examples read the same environment variable (or callers pass the
+platform value to the router); Go reads `HandlerOptions.GameID` or
+`GameIDProvider`. `/health` checks that this identity is present and valid.
+`/manifest` independently checks and returns the game configuration. Check both:
+a healthy process does not prove that its manifest is usable, and a valid
+manifest does not prove that the target platform rollout is enabled.
+
 ## Data contracts
 
 ### Game manifest
@@ -81,9 +91,24 @@ integers satisfying `1 <= minPlayers <= maxPlayers <= 100`; zero-player starts
 are unsupported. The current room platform accepts tick rates from 1 through
 60 Hz, including fractional rates.
 `persistentTable` is a boolean. `optionsSchema` may optionally declare
-a JSON Schema for game options. `resultDefinition` is optional and declares
-the result-unit types and metric aggregation contract described below. Keep its
-version stable only while its meaning is unchanged.
+a JSON Schema for game options; its wire value must be an object or boolean
+(`null`, arrays, strings, and numbers are invalid). The SDKs validate this wire
+shape but do not evaluate the schema against each game's options payload.
+`resultDefinition` is optional and declares the result-unit types and metric
+aggregation contract described below. Keep its version stable only while its
+meaning is unchanged.
+
+For example, this is a valid object schema (a boolean schema is also valid):
+
+```json
+{
+  "optionsSchema": {
+    "type": "object",
+    "properties": { "mode": { "type": "string", "enum": ["casual", "ranked"] } },
+    "additionalProperties": false
+  }
+}
+```
 
 On the RandSeed platform, `minPlayers` is the minimum number of assigned
 players required before a match may start (at least one; zero-player starts
@@ -93,35 +118,147 @@ empty. `maxPlayers` is the maximum number of player seats, not a target the
 lobby must fill. For example, `minPlayers: 2` and `maxPlayers: 4` allows the
 platform to start with two assigned players and leaves capacity for up to two
 more. A solo game uses `minPlayers: 1`. If a game requires an exact roster, set
-both values to that roster size. After startup, additional seats can be
-admitted only while the game reports `joinable: true` and the roster remains
-below `maxPlayers`. Node.js, Rust, and .NET SDKs enforce manifest roster bounds
-at `/init`; Go and C++ currently validate only generic roster constraints.
-Gamecreator also enforces manifest bounds platform-side. Matchmaking and startup
-timing belong to the host/platform. `wait_for_ready` is a separate
-post-match policy and uses the completed match's full roster to decide when to
-start the next match.
+both values to that roster size. After startup, a new player identity can be
+assigned only while the game reports `joinable: true` and an unassigned seat
+remains. `joinable` does not revoke a seat already assigned to an identity: that
+player may reconnect while `joinable` is false and does not consume another
+seat. A leave event represents a connection leaving, not permanent seat
+release; v1 has no separate permanent-departure event.
 
-`playerViewMode` may be `"private"` when every active seat must receive a
-recipient-specific projection. In this mode, `POST /init` must return exactly
-one `playerViews` entry for every configured player. `POST /tick` and
-`POST /onCommand` requests must include the active `players` roster whenever
-the game returns per-player views; private-view games must always include it.
-Player-event requests may include `players` for the resulting roster (after a
-join or leave). Whenever `playerViews` is returned, the request must provide
-that resulting roster so the SDK can verify an exact key match. Private mode
-rejects missing views; an absent or extra key is an error, never a fallback to
-canonical `state`. Each view is capped at 64 KiB and the complete UTF-8 JSON
-serialization of the map (including player ID keys and JSON syntax overhead)
-at 1 MiB.
+The host/platform MUST track assigned seats separately from the active `players`
+roster and preserve that admission set across checkpoints, replay, restart, and
+restore. The active roster alone drives callbacks, input authorization, and
+recipient projections; retained seats MUST NOT be added to callback rosters or
+private views. A reconnect may produce `onPlayerJoin` with the resulting active
+roster, without allocating a duplicate seat. Node.js, Rust, Go, and .NET SDKs
+enforce manifest roster bounds at `/init`; C++ currently validates only
+generic roster constraints. Gamecreator also enforces manifest bounds
+platform-side. Matchmaking and startup timing belong to the host/platform.
+`wait_for_ready` is a separate post-match policy and uses the completed match's
+full assigned roster to decide when to start the next match.
+
+### Private room-host player views
+
+`playerViewMode` opts a game into the general room-host v1 recipient-specific
+projection contract. The mode value is either omitted (ordinary public game) or
+`"private"`; do not send `"public"` or `null`. The schema version defaults to
+v1 when omitted for private mode. An explicit version is optional and may only
+be the JSON number `1` when `playerViewMode` is `"private"`. An explicit
+`null`, unsupported value, or schema version without private mode is invalid.
+The canonical vectors are
+[`room-host-private-v1.json`](./fixtures/room-host-private-v1.json).
+
+Public wire manifest (both private fields omitted):
+
+```json
+{
+  "title": "Room Counter",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false
+}
+```
+
+Private mode with the v1 default (no schema version required):
+
+```json
+{
+  "title": "Hidden Hand",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false,
+  "playerViewMode": "private"
+}
+```
+
+Private mode with the optional explicit v1 declaration:
+
+```json
+{
+  "title": "Hidden Hand",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false,
+  "playerViewMode": "private",
+  "playerViewSchemaVersion": 1
+}
+```
+
+`POST /init` derives its required projection roster from `MatchConfig.players`.
+Private `/tick` and `/onCommand` requests must include the host-supplied active
+`players` roster. A join request includes the resulting active roster with the
+joining player; a leave request includes the resulting active roster without
+the leaving player. The callback receives that roster in the SDK-specific
+request context. For every private state transition (`/init`, `/tick`,
+`/onPlayerJoin`, `/onPlayerLeave`, and `/onCommand`), return exactly one JSON
+`playerViews` entry for each active roster member. An empty active roster is
+valid after a final leave and requires the explicit `players: []` roster and
+`playerViews: {}`. A missing or `null` roster is not an empty roster; it is
+invalid wherever the active roster is required. Invalid, missing, or extra
+view entries fail closed. For public HTTP transitions, an explicitly supplied
+empty `players` array likewise means an empty active roster; `null` is invalid.
+The stream hydration roster is required and may be empty when hydrating a
+checkpoint after the final leave.
+Each serialized view is limited to 64 KiB; the complete UTF-8 JSON serialization of the view map, including player ID keys and JSON
+syntax, is limited to 1 MiB. No view map is required for `/isGameOver`, which
+does not return a state transition.
+
+Example transition response (the identifiers are fixture placeholders, not
+platform or user identity values):
+
+```json
+{
+  "state": {
+    "hands": {
+      "seat-a": ["ACE_OF_SPADES"],
+      "seat-b": ["KING_OF_CLUBS"]
+    }
+  },
+  "playerViews": {
+    "seat-a": { "hand": ["ACE_OF_SPADES"], "viewer": "seat-a" },
+    "seat-b": { "hand": ["KING_OF_CLUBS"], "viewer": "seat-b" }
+  }
+}
+```
+
+`state` remains canonical authoritative simulation state and is delivered only
+to the trusted room host. The game callback must construct each view from the
+recipient perspective and exclude other seats private data, hidden random
+state, and secrets. The host must select the view keyed by the authenticated
+recipient; it must never deliver canonical `state`, another player view, or an
+empty fallback when a view is missing. The SDK validates JSON, exact roster
+coverage and resource limits; it cannot judge whether a game author classified
+the data correctly. Do not expose `/manifest` or lifecycle endpoints as a
+browser player API.
+
+Node.js, Rust, and Go implement these HTTP lifecycle checks. Go support here is
+limited to the HTTP room lifecycle; this does not add Go `/stream`, Agent, or
+other capabilities. Rust retains existing public `GameManifest` struct literal
+compatibility and emits the optional explicit `playerViewSchemaVersion: 1`
+when a private manifest is serialized.
+
+Rollout status recorded 2026-11-17: Gamecreator PR #340 is open and not
+deployed, and this cross-SDK source change is pending independent review; no
+released SDK or platform rollout is implied. Confirm both the installed SDK
+release and target host environment before enabling private player routing.
 
 ### Match configuration
+
+The JSON below is illustrative: replace its `gameId` and `players` with the
+platform-assigned RandSeed Game ID and the host-supplied player IDs. Those
+identity values must not be guessed or copied from the example.
 
 ```json
 {
   "matchId": "match-1",
-  "gameId": "room-counter",
-  "players": ["pairwise-a", "pairwise-b"],
+  "gameId": "<platform-assigned-game-id>",
+  "players": ["<host-player-id-a>", "<host-player-id-b>"],
   "matchSeq": 1,
   "options": {
     "randomSeed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",

@@ -37,6 +37,29 @@ fn sdk_error_codes_match_the_shared_fixture() {
 }
 
 #[test]
+fn private_view_manifest_matches_shared_cross_language_vectors() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/fixtures/room-host-private-v1.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["protocolVersion"], 1);
+    for test_case in fixture["manifestCases"].as_array().unwrap() {
+        let manifest = serde_json::from_value::<GameManifest>(test_case["manifest"].clone());
+        if test_case["valid"].as_bool().unwrap() {
+            let manifest =
+                manifest.unwrap_or_else(|error| panic!("{}: {error}", test_case["name"]));
+            manifest.validate().unwrap();
+        } else {
+            assert!(
+                manifest.is_err(),
+                "{} unexpectedly accepted",
+                test_case["name"]
+            );
+        }
+    }
+}
+
+#[test]
 fn private_view_map_size_includes_player_ids_and_json_overhead() {
     let player_id = "p".repeat(1024 * 1024);
     let players = vec![player_id.clone()];
@@ -140,11 +163,42 @@ fn room_host_wire_roundtrips_opaque_carryover_and_frame_context() {
 }
 
 #[test]
+fn legacy_empty_tick_roster_is_omitted_but_explicit_wrapper_sends_empty_array() {
+    let request = randseed_game_sdk::TickRequest {
+        ctx: TickContext {
+            tick: 1,
+            inputs: vec![TickInput {
+                player_id: "legacy-player".into(),
+                data: json!({"move": "north"}),
+                ..TickInput::default()
+            }],
+            commands: vec![],
+            elapsed_seconds: 0.1,
+        },
+        state: json!({"score": 0}),
+        players: vec![],
+    };
+    let legacy_wire = serde_json::to_value(&request).unwrap();
+    assert!(legacy_wire.get("players").is_none());
+    assert_eq!(legacy_wire["ctx"]["inputs"][0]["playerId"], "legacy-player");
+    let explicit_wire = serde_json::to_value(request.with_explicit_players()).unwrap();
+    assert_eq!(explicit_wire["players"], json!([]));
+}
+
+#[test]
 fn protocol_v1_validation_rejects_out_of_range_values() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/room-host-v1.json")).unwrap();
     let mut manifest: GameManifest = serde_json::from_value(fixture["manifest"].clone()).unwrap();
     assert!(manifest.validate().is_ok());
+    let mut explicit_null_schema = fixture["manifest"].clone();
+    explicit_null_schema["optionsSchema"] = serde_json::Value::Null;
+    let null_manifest: GameManifest = serde_json::from_value(explicit_null_schema).unwrap();
+    assert_eq!(null_manifest.options_schema, Some(serde_json::Value::Null));
+    assert!(
+        null_manifest.validate().is_err(),
+        "explicit null optionsSchema is invalid"
+    );
     manifest.min_players = 0;
     assert!(
         manifest.validate().is_err(),
@@ -682,15 +736,15 @@ async fn agent_player_contract_and_projection_routes_validate_scope_and_view() {
         )
         .await
         .unwrap();
-    assert_eq!(health_response.status().as_u16(), 200);
+    assert_eq!(health_response.status().as_u16(), 503);
     let health_body = health_response
         .into_body()
         .collect()
         .await
         .unwrap()
         .to_bytes();
-    let health: HealthResponse = serde_json::from_slice(&health_body).unwrap();
-    assert_eq!(health.game_id, "randseed-game");
+    let health: serde_json::Value = serde_json::from_slice(&health_body).unwrap();
+    assert_eq!(health["code"], "INTERNAL_ERROR");
 
     let unconfigured_view_response =
         create_game_router(Arc::new(AgentGame(capabilities.clone())), None)
@@ -715,15 +769,15 @@ async fn agent_player_contract_and_projection_routes_validate_scope_and_view() {
         )
         .await
         .unwrap();
-    assert_eq!(health_response.status().as_u16(), 200);
+    assert_eq!(health_response.status().as_u16(), 503);
     let health_body = health_response
         .into_body()
         .collect()
         .await
         .unwrap()
         .to_bytes();
-    let health: HealthResponse = serde_json::from_slice(&health_body).unwrap();
-    assert_eq!(health.game_id, "randseed-game");
+    let health: serde_json::Value = serde_json::from_slice(&health_body).unwrap();
+    assert_eq!(health["code"], "INTERNAL_ERROR");
 }
 
 #[tokio::test]
@@ -884,6 +938,29 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(tick_res.state["score"], 10);
     assert_eq!(tick_res.state["tickCount"], 50);
     assert!(tick_res.persist);
+
+    let empty_tick = client
+        .post(format!("{}/tick", base_url))
+        .json(&json!({
+            "ctx": {"tick": 51, "inputs": [], "elapsedSeconds": 0.1},
+            "state": {"score": 0, "tickCount": 50},
+            "players": []
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(empty_tick.status(), 200);
+    let null_roster = client
+        .post(format!("{}/tick", base_url))
+        .json(&json!({
+            "ctx": {"tick": 51, "inputs": [], "elapsedSeconds": 0.1},
+            "state": {"score": 0, "tickCount": 50},
+            "players": null
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(null_roster.status(), 400);
 
     // 5. POST /onPlayerJoin
     let join_req = json!({

@@ -302,3 +302,58 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
     ws.close();
   });
 });
+
+test("public stream hydration accepts an explicit empty active roster and rejects absent or null rosters", async (t) => {
+  const game = {
+    manifest: () => ({
+      title: "Public Recovery",
+      version: "1.0.0",
+      minPlayers: 1,
+      maxPlayers: 4,
+      tickRateHz: 20,
+      persistentTable: false,
+    }),
+    tick: (_ctx, state) => ({ state, persist: false }),
+    isGameOver: () => ({ over: false }),
+  };
+  const server = createGameServer(game, 0);
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/stream`);
+  const inbox = [];
+  let notify;
+  ws.addEventListener("message", (event) => {
+    inbox.push(JSON.parse(event.data));
+    notify?.();
+  });
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener("error", reject, { once: true });
+  });
+  t.after(() => ws.close());
+  const send = async (payload) => {
+    ws.send(JSON.stringify(payload));
+    while (inbox.length === 0) await new Promise((resolve) => { notify = resolve; });
+    notify = undefined;
+    return inbox.shift();
+  };
+  const base = {
+    type: "hydrate",
+    matchId: "public-after-final-leave",
+    tickRateHz: 20,
+    tick: 7,
+    state: { tick: 7 },
+  };
+
+  assert.equal((await send({ ...base, players: [] })).type, "hydrated");
+  assert.equal((await send(base)).code, "WRONG_ROSTER");
+  assert.equal((await send({ ...base, players: null })).code, "WRONG_ROSTER");
+  await new Promise((resolve) => {
+    if (ws.readyState === WebSocket.CLOSED) return resolve();
+    ws.addEventListener("close", resolve, { once: true });
+    ws.close();
+  });
+});

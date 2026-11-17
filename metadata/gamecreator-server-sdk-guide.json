@@ -20,7 +20,7 @@
     },
     {
       "name": "Room player limits",
-      "description": "Configure integers with 1 <= minPlayers <= maxPlayers <= 100. minPlayers counts assigned players, not connected WebSockets; maxPlayers is seat capacity, not a fill target. Set both equal for a fixed-size roster."
+      "description": "Configure integers with 1 <= minPlayers <= maxPlayers <= 100. minPlayers counts assigned players, not connected WebSockets; maxPlayers is seat capacity, not a fill target. Node.js, Rust, Go, and .NET enforce init bounds; set both equal for an exact roster."
     },
     {
       "name": "Room client migration",
@@ -40,7 +40,7 @@
     },
     {
       "name": "Private player views",
-      "description": "Node.js and Rust validate recipient-specific views against the active roster and fail closed instead of exposing canonical state."
+      "description": "Node.js, Rust, and Go implement the general room-host v1 HTTP contract. Private mode defaults to schema v1 when the version is omitted; explicit 1 is optional and only valid with private mode. Exact roster coverage, JSON validity, and per-view/map limits are enforced; missing views never fall back to canonical state. Go does not add stream or Agent support."
     },
     {
       "name": "Match results",
@@ -64,28 +64,64 @@
     {
       "group": "Room lifecycle",
       "routes": [
-        { "name": "GET /manifest", "description": "Game metadata, options schema, player-view mode, and Result Unit definitions." },
-        { "name": "GET /health", "description": "Container health and runtime identity." },
-        { "name": "POST /init", "description": "Initialize a match from host-provided players and options." },
-        { "name": "POST /tick", "description": "Apply one authoritative tick of player inputs and commands." },
-        { "name": "POST /onPlayerJoin", "description": "Handle a player joining or reconnecting without duplicating an existing seat." },
-        { "name": "POST /onPlayerLeave", "description": "Handle a player disconnecting or leaving according to the game's offline rules; no disconnect reason is supplied." },
-        { "name": "POST /isGameOver", "description": "Return terminal status, match summary, and next-match policy." },
-        { "name": "POST /onCommand", "description": "Apply a trusted room-host command." }
+        {
+          "name": "GET /manifest",
+          "description": "Game metadata, options schema, player-view mode and optional v1 schema version, and Result Unit definitions."
+        },
+        {
+          "name": "GET /health",
+          "description": "Container health and runtime identity."
+        },
+        {
+          "name": "POST /init",
+          "description": "Initialize a match from host-provided players and options."
+        },
+        {
+          "name": "POST /tick",
+          "description": "Apply one authoritative tick; private mode requires the active roster and recipient-keyed playerViews."
+        },
+        {
+          "name": "POST /onPlayerJoin",
+          "description": "Handle a player joining or reconnecting without duplicating an existing seat."
+        },
+        {
+          "name": "POST /onPlayerLeave",
+          "description": "Handle a player disconnecting or leaving according to the game's offline rules; no disconnect reason is supplied."
+        },
+        {
+          "name": "POST /isGameOver",
+          "description": "Return terminal status, match summary, and next-match policy."
+        },
+        {
+          "name": "POST /onCommand",
+          "description": "Apply a trusted room-host command."
+        }
       ]
     },
     {
       "group": "Stateful sessions (Node.js and Rust)",
       "routes": [
-        { "name": "WebSocket /stream", "description": "Exchange hydrate and step messages for stateful simulation, recovery, replay, and action results." }
+        {
+          "name": "WebSocket /stream",
+          "description": "Exchange hydrate and step messages for stateful simulation, recovery, replay, and action results."
+        }
       ]
     },
     {
       "group": "Optional Agent interfaces (Node.js and Rust)",
       "routes": [
-        { "name": "GET /agent/capabilities", "description": "Declare supported Agent protocols and control modes." },
-        { "name": "GET /agent/player-contract", "description": "Declare per-seat view and action schemas." },
-        { "name": "POST /agent/player-view", "description": "Project a recipient-only view for the trusted room host." }
+        {
+          "name": "GET /agent/capabilities",
+          "description": "Declare supported Agent protocols and control modes."
+        },
+        {
+          "name": "GET /agent/player-contract",
+          "description": "Declare per-seat view and action schemas."
+        },
+        {
+          "name": "POST /agent/player-view",
+          "description": "Project a recipient-only view for the trusted room host."
+        }
       ]
     }
   ],
@@ -107,5 +143,117 @@
       "name": "C++",
       "path": "cpp"
     }
-  ]
+  ],
+  "roomHostV1": {
+    "privatePlayerViews": {
+      "protocolVersion": 1,
+      "supportedBy": [
+        "Node.js/TypeScript",
+        "Rust",
+        "Go"
+      ],
+      "unsupportedGoCapabilities": [
+        "Session Stream",
+        "Agent"
+      ],
+      "manifest": {
+        "public": {
+          "title": "Room Counter",
+          "version": "1.0.0",
+          "minPlayers": 2,
+          "maxPlayers": 4,
+          "tickRateHz": 5,
+          "persistentTable": false
+        },
+        "privateDefaultV1": {
+          "title": "Hidden Hand",
+          "version": "1.0.0",
+          "minPlayers": 2,
+          "maxPlayers": 4,
+          "tickRateHz": 5,
+          "persistentTable": false,
+          "playerViewMode": "private"
+        },
+        "privateExplicitV1": {
+          "title": "Hidden Hand",
+          "version": "1.0.0",
+          "minPlayers": 2,
+          "maxPlayers": 4,
+          "tickRateHz": 5,
+          "persistentTable": false,
+          "playerViewMode": "private",
+          "playerViewSchemaVersion": 1
+        }
+      },
+      "schemaVersion": {
+        "defaultWhenOmittedForPrivate": 1,
+        "allowedExplicitValues": [
+          1
+        ],
+        "requiresPlayerViewMode": "private",
+        "rejectNull": true,
+        "rejectUnsupportedValues": true,
+        "rejectVersionWithoutPrivateMode": true,
+        "rejectPublicModeValue": true
+      },
+      "lifecycle": {
+        "init": {
+          "rosterSource": "MatchConfig.players",
+          "viewsRequired": true
+        },
+        "tick": {
+          "rosterSource": "request.players",
+          "viewsRequired": true
+        },
+        "onPlayerJoin": {
+          "rosterSource": "resulting request.players, including joining seat",
+          "viewsRequired": true
+        },
+        "onPlayerLeave": {
+          "rosterSource": "resulting request.players, excluding leaving seat",
+          "viewsRequired": true
+        },
+        "onCommand": {
+          "rosterSource": "request.players",
+          "viewsRequired": true
+        },
+        "isGameOver": {
+          "viewsRequired": false
+        }
+      },
+      "viewLimits": {
+        "singleSerializedViewBytes": 65536,
+        "completeSerializedMapBytes": 1048576,
+        "exactKeyMatch": true
+      },
+      "privacyBoundary": "The game callback creates each recipient projection. The trusted room host selects the view for the authenticated recipient. Canonical state and other seat views must never be fallback or player delivery.",
+      "identity": {
+        "validGameIdPattern": "^[A-Za-z0-9_-]{1,64}$",
+        "node": "RANDSEED_GAME_ID",
+        "rust": "RANDSEED_GAME_ID for runners or explicit router argument",
+        "go": "HandlerOptions.GameID or GameIDProvider"
+      },
+      "listening": {
+        "defaultPort": 8080,
+        "nodePortSource": "createGameServer port, normally PORT",
+        "rustPortSource": "run_game_server port, examples use PORT",
+        "goPortSource": "ListenAndServe binds 8080; NewHandler can mount on an existing listener"
+      },
+      "deploymentChecks": [
+        {
+          "path": "/health",
+          "purpose": "Verify process health and the actual platform-assigned game ID."
+        },
+        {
+          "path": "/manifest",
+          "purpose": "Verify manifest shape and SDK capability declaration."
+        }
+      ],
+      "releaseStatus": {
+        "asOf": "2026-11-17",
+        "sdkSource": "This cross-SDK change is pending independent review and is not a release.",
+        "gamecreatorPlatform": "PR #340 is open and not deployed; production support is not implied."
+      }
+    }
+  }
 }

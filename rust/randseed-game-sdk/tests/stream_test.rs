@@ -136,6 +136,28 @@ fn session_stream_fixture_round_trips_in_rust() {
     .is_err());
 }
 
+#[test]
+fn hydrate_wire_requires_and_serializes_an_explicit_empty_roster() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/fixtures/room-host-private-empty-roster-v1.json"
+    ))
+    .unwrap();
+    let expected = fixture["hydrate"].clone();
+    let hydrate = serde_json::from_value::<StreamClientMessage>(expected.clone()).unwrap();
+    let wire = serde_json::to_value(&hydrate).unwrap();
+    assert_eq!(wire, expected);
+    assert_eq!(wire["players"], json!([]));
+    let decoded = serde_json::from_value::<StreamClientMessage>(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+
+    let mut omitted = wire.clone();
+    omitted.as_object_mut().unwrap().remove("players");
+    assert!(serde_json::from_value::<StreamClientMessage>(omitted).is_err());
+    let mut null = wire;
+    null["players"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<StreamClientMessage>(null).is_err());
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct CounterState {
     tick: u64,
@@ -359,7 +381,20 @@ impl TypedGameServer for TypedCounterGame {
     }
 }
 
-struct PrivateViewGame;
+type RosterCallLog = Arc<std::sync::Mutex<Vec<(String, Option<Vec<String>>)>>>;
+
+#[derive(Default)]
+struct PrivateViewGame {
+    roster_calls: Option<RosterCallLog>,
+}
+
+impl PrivateViewGame {
+    fn record_roster(&self, callback: &str, players: Option<Vec<String>>) {
+        if let Some(calls) = &self.roster_calls {
+            calls.lock().unwrap().push((callback.to_string(), players));
+        }
+    }
+}
 
 fn private_views(state: &serde_json::Value) -> HashMap<String, serde_json::Value> {
     let players = state["players"].as_array().expect("players array");
@@ -440,6 +475,30 @@ impl GameServer for PrivateViewGame {
         })
     }
 
+    async fn tick_ext(
+        &self,
+        request: randseed_game_sdk::TickRequest,
+    ) -> Result<TickResult, SdkError> {
+        self.record_roster("tick", Some(request.players.clone()));
+        self.tick(request.ctx, request.state).await
+    }
+
+    async fn on_player_join_ext(
+        &self,
+        request: randseed_game_sdk::PlayerEventRequest,
+    ) -> Result<PlayerEventResult, SdkError> {
+        self.record_roster("join", request.players.clone());
+        self.on_player_join(request.player_id, request.state).await
+    }
+
+    async fn on_player_leave_ext(
+        &self,
+        request: randseed_game_sdk::PlayerEventRequest,
+    ) -> Result<PlayerEventResult, SdkError> {
+        self.record_roster("leave", request.players.clone());
+        self.on_player_leave(request.player_id, request.state).await
+    }
+
     async fn on_player_join(
         &self,
         player_id: String,
@@ -496,7 +555,10 @@ impl GameServer for PrivateViewGame {
 
 #[tokio::test]
 async fn sdk_migration_preflight_covers_http_roster_and_private_stream_recovery() {
-    let router = create_game_router(Arc::new(PrivateViewGame), Some("private-game".into()));
+    let router = create_game_router(
+        Arc::new(PrivateViewGame::default()),
+        Some("private-game".into()),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -621,7 +683,7 @@ async fn sdk_migration_preflight_covers_http_roster_and_private_stream_recovery(
 
     server.abort();
 
-    let factory = ValueStreamFactory(Arc::new(PrivateViewGame));
+    let factory = ValueStreamFactory(Arc::new(PrivateViewGame::default()));
     let mut session = factory.new_session();
     let hydrated = session
         .handle_message(StreamClientMessage::Hydrate {
@@ -847,7 +909,10 @@ async fn sdk_migration_preflight_covers_http_roster_and_private_stream_recovery(
 
 #[tokio::test]
 async fn sdk_migration_preflight_websocket_transport_covers_recovery_and_errors() {
-    let router = create_game_router(Arc::new(PrivateViewGame), Some("private-game".into()));
+    let router = create_game_router(
+        Arc::new(PrivateViewGame::default()),
+        Some("private-game".into()),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -1019,6 +1084,113 @@ async fn sdk_migration_preflight_websocket_transport_covers_recovery_and_errors(
     assert_eq!(missing_view["retryable"], false);
     drop(recovered_socket);
     server.abort();
+}
+
+#[tokio::test]
+async fn private_stream_callbacks_receive_post_event_roster_including_empty_recovery() {
+    let roster_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let game = Arc::new(PrivateViewGame {
+        roster_calls: Some(roster_calls.clone()),
+    });
+    let factory = ValueStreamFactory(game);
+    let mut session = factory.new_session();
+    let hydrated = session
+        .handle_message(StreamClientMessage::Hydrate {
+            match_id: "private-empty-roster".into(),
+            tick_rate_hz: 10.0,
+            tick: 0,
+            state: json!({
+                "players": ["p1", "p2"],
+                "secrets": { "p1": "P1_CANARY", "p2": "P2_CANARY" },
+                "tick": 0,
+            }),
+            players: vec!["p1".into(), "p2".into()],
+            player_views: Some(HashMap::from([
+                ("p1".into(), json!({ "ownSecret": "P1_CANARY" })),
+                ("p2".into(), json!({ "ownSecret": "P2_CANARY" })),
+            ])),
+            replay: vec![],
+            resync_players: vec![],
+        })
+        .await;
+    assert!(matches!(hydrated, StreamServerMessage::Hydrated { .. }));
+
+    let terminal = session
+        .handle_message(StreamClientMessage::Step {
+            tick: 1,
+            inputs: vec![],
+            events: vec![
+                StreamStepEvent::Leave {
+                    player_id: "p1".into(),
+                },
+                StreamStepEvent::Leave {
+                    player_id: "p2".into(),
+                },
+            ],
+            resync_players: vec![],
+            want_state: true,
+        })
+        .await;
+    let checkpoint = match terminal {
+        StreamServerMessage::StepResult {
+            state,
+            player_views,
+            ..
+        } => {
+            assert_eq!(player_views.unwrap().len(), 0);
+            let state = state.unwrap();
+            assert_eq!(state["players"], json!([]));
+            state
+        }
+        other => panic!("unexpected empty-roster step result: {other:?}"),
+    };
+    assert_eq!(
+        *roster_calls.lock().unwrap(),
+        vec![
+            ("leave".into(), Some(vec!["p2".into()])),
+            ("leave".into(), Some(vec![])),
+            ("tick".into(), Some(vec![])),
+        ]
+    );
+
+    let recovered = factory
+        .new_session()
+        .handle_message(StreamClientMessage::Hydrate {
+            match_id: "private-empty-recovered".into(),
+            tick_rate_hz: 10.0,
+            tick: 1,
+            state: checkpoint,
+            players: vec![],
+            player_views: Some(HashMap::new()),
+            replay: vec![],
+            resync_players: vec![],
+        })
+        .await;
+    assert!(
+        matches!(recovered, StreamServerMessage::Hydrated { tick: 1, player_views: Some(views), .. } if views.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn public_stream_hydrates_an_explicit_empty_roster_after_final_leave() {
+    let factory = TypedStreamFactory(Arc::new(TypedCounterGame));
+    let mut session: Box<dyn ActiveStreamSession> = factory.new_session();
+    let hydrated = session
+        .handle_message(StreamClientMessage::Hydrate {
+            match_id: "public-after-final-leave".into(),
+            tick_rate_hz: 20.0,
+            tick: 7,
+            state: json!({ "tick": 7, "score": 0, "players": [] }),
+            players: vec![],
+            player_views: None,
+            replay: vec![],
+            resync_players: vec![],
+        })
+        .await;
+    assert!(matches!(
+        hydrated,
+        StreamServerMessage::Hydrated { tick: 7, .. }
+    ));
 }
 
 #[tokio::test]

@@ -1,0 +1,9 @@
+{
+  "tickActive": {"ctx": {"tick": 1, "inputs": [], "elapsedSeconds": 0.05}, "state": {"count": 0}, "players": ["seat-a", "seat-b"]},
+  "command": {"command": {"type": "reset", "data": {}, "issuer": "platform"}, "state": {"count": 0}, "players": ["seat-a", "seat-b"]},
+  "join": {"playerId": "seat-c", "state": {"count": 1}, "players": ["seat-a", "seat-b", "seat-c"]},
+  "leaveJoined": {"playerId": "seat-c", "state": {"count": 2}, "players": ["seat-a", "seat-b"]},
+  "leaveFirst": {"playerId": "seat-a", "state": {"count": 3}, "players": ["seat-b"]},
+  "leaveLast": {"playerId": "seat-b", "state": {"count": 4}, "players": []},
+  "tickEmpty": {"ctx": {"tick": 2, "inputs": [], "elapsedSeconds": 0.1}, "state": {"count": 5}, "players": []}
+}
