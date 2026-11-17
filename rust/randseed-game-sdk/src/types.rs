@@ -4,6 +4,8 @@
 
 use crate::agent_player_view::{valid_action_code, valid_key, valid_schema_id};
 use crate::errors::{SdkError, SdkErrorCode};
+use serde::de::Error as _;
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -624,42 +626,142 @@ where
 }
 
 /// Game metadata returned by `GET /manifest`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GameManifest {
     /// Display title.
     pub title: String,
     /// Semantic version.
     pub version: String,
     /// Minimum assigned players required to start a match; at least one (zero-player starts are unsupported).
-    #[serde(rename = "minPlayers")]
     pub min_players: u32,
     /// Maximum player-seat capacity, at least `min_players`; the room may start before it is full.
-    #[serde(rename = "maxPlayers")]
     pub max_players: u32,
     /// Simulation tick frequency in hertz, from 1 through 60.
-    #[serde(rename = "tickRateHz")]
     pub tick_rate_hz: f64,
     /// Whether this game supports persistent rooms across matches.
-    #[serde(rename = "persistentTable")]
     pub persistent_table: bool,
     /// Optional JSON Schema for match options.
-    #[serde(rename = "optionsSchema", skip_serializing_if = "Option::is_none")]
     pub options_schema: Option<serde_json::Value>,
     /// Require recipient-specific views for every active seat.
-    #[serde(
-        rename = "playerViewMode",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
     pub player_view_mode: Option<PlayerViewMode>,
     /// Optional versioned result-unit and metric declaration.
-    #[serde(
-        rename = "resultDefinition",
-        default,
-        deserialize_with = "deserialize_present_option",
-        skip_serializing_if = "Option::is_none"
-    )]
     pub result_definition: Option<GameResultDefinition>,
+}
+
+impl Serialize for GameManifest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let private = self.player_view_mode == Some(PlayerViewMode::Private);
+        let fields = 6
+            + usize::from(self.options_schema.is_some())
+            + if private { 2 } else { 0 }
+            + usize::from(self.result_definition.is_some());
+        let mut state = serializer.serialize_struct("GameManifest", fields)?;
+        state.serialize_field("title", &self.title)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("minPlayers", &self.min_players)?;
+        state.serialize_field("maxPlayers", &self.max_players)?;
+        state.serialize_field("tickRateHz", &self.tick_rate_hz)?;
+        state.serialize_field("persistentTable", &self.persistent_table)?;
+        if let Some(schema) = &self.options_schema {
+            state.serialize_field("optionsSchema", schema)?;
+        }
+        if private {
+            state.serialize_field("playerViewMode", "private")?;
+            state.serialize_field("playerViewSchemaVersion", &1u8)?;
+        }
+        if let Some(definition) = &self.result_definition {
+            state.serialize_field("resultDefinition", definition)?;
+        }
+        state.end()
+    }
+}
+
+#[derive(Deserialize)]
+struct GameManifestWire {
+    title: String,
+    version: String,
+    #[serde(rename = "minPlayers")]
+    min_players: u32,
+    #[serde(rename = "maxPlayers")]
+    max_players: u32,
+    #[serde(rename = "tickRateHz")]
+    tick_rate_hz: f64,
+    #[serde(rename = "persistentTable")]
+    persistent_table: bool,
+    #[serde(
+        default,
+        rename = "optionsSchema",
+        deserialize_with = "deserialize_present_option"
+    )]
+    options_schema: Option<serde_json::Value>,
+    #[serde(
+        default,
+        rename = "playerViewMode",
+        deserialize_with = "deserialize_present_value"
+    )]
+    player_view_mode: Option<serde_json::Value>,
+    #[serde(
+        default,
+        rename = "playerViewSchemaVersion",
+        deserialize_with = "deserialize_present_value"
+    )]
+    player_view_schema_version: Option<serde_json::Value>,
+    #[serde(
+        default,
+        rename = "resultDefinition",
+        deserialize_with = "deserialize_present_option"
+    )]
+    result_definition: Option<GameResultDefinition>,
+}
+
+fn deserialize_present_value<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
+}
+
+impl<'de> Deserialize<'de> for GameManifest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = GameManifestWire::deserialize(deserializer)?;
+        let player_view_mode = match wire.player_view_mode {
+            None => None,
+            Some(serde_json::Value::String(value)) if value == "private" => {
+                Some(PlayerViewMode::Private)
+            }
+            Some(_) => {
+                return Err(D::Error::custom(
+                    "playerViewMode must be private when provided",
+                ))
+            }
+        };
+        if let Some(schema_version) = wire.player_view_schema_version {
+            if schema_version.as_f64() != Some(1.0)
+                || player_view_mode != Some(PlayerViewMode::Private)
+            {
+                return Err(D::Error::custom(
+                    "playerViewSchemaVersion must be 1 and requires playerViewMode private",
+                ));
+            }
+        }
+        Ok(Self {
+            title: wire.title,
+            version: wire.version,
+            min_players: wire.min_players,
+            max_players: wire.max_players,
+            tick_rate_hz: wire.tick_rate_hz,
+            persistent_table: wire.persistent_table,
+            options_schema: wire.options_schema,
+            player_view_mode,
+            result_definition: wire.result_definition,
+        })
+    }
 }
 
 impl GameManifest {
@@ -699,6 +801,16 @@ impl GameManifest {
             return Err(SdkError::protocol_with_message(
                 SdkErrorCode::InvalidManifest,
                 "tickRateHz must be a finite number between 1 and 60.",
+            ));
+        }
+        if self
+            .options_schema
+            .as_ref()
+            .is_some_and(|schema| !schema.is_object() && !schema.is_boolean())
+        {
+            return Err(SdkError::protocol_with_message(
+                SdkErrorCode::InvalidManifest,
+                "optionsSchema must be a JSON Schema object or boolean.",
             ));
         }
         if let Some(definition) = &self.result_definition {
@@ -1451,6 +1563,25 @@ pub struct TickRequest {
     pub players: Vec<String>,
 }
 
+/// Borrowed wire wrapper for callers that must explicitly send an empty roster.
+#[derive(Debug, Serialize)]
+pub struct TickRequestWithPlayers<'a> {
+    ctx: &'a TickContext,
+    state: &'a serde_json::Value,
+    players: &'a [String],
+}
+
+impl TickRequest {
+    /// Serialize with an explicit roster, including `players: []` for an empty slice.
+    pub fn with_explicit_players(&self) -> TickRequestWithPlayers<'_> {
+        TickRequestWithPlayers {
+            ctx: &self.ctx,
+            state: &self.state,
+            players: &self.players,
+        }
+    }
+}
+
 /// Request payload for a player lifecycle event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerEventRequest {
@@ -1460,7 +1591,11 @@ pub struct PlayerEventRequest {
     /// Current game state.
     pub state: serde_json::Value,
     /// Active roster after this join or leave event.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub players: Option<Vec<String>>,
     /// Optional flattened extension fields (such as a player profile object).
     #[serde(default, flatten, skip_serializing_if = "HashMap::is_empty")]
@@ -1525,7 +1660,11 @@ pub struct CommandRequest {
     /// Current game state.
     pub state: serde_json::Value,
     /// Active roster used to validate per-player projections.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub players: Option<Vec<String>>,
 }
 

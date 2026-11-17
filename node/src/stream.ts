@@ -291,7 +291,7 @@ async function applySingleStep<TState>(
         players.push(event.playerId);
         validateRosterBounds(players, manifest);
       }
-      const result = await invokeGame("onPlayerJoin", () => game.onPlayerJoin(event.playerId, state));
+      const result = await invokeGame("onPlayerJoin", () => game.onPlayerJoin(event.playerId, state, [...players]));
       applyStateResult(result);
       state = result.state;
       if (result.broadcasts) broadcasts.push(...(result.broadcasts as JsonValue[]));
@@ -302,7 +302,7 @@ async function applySingleStep<TState>(
       const playerIndex = players.indexOf(event.playerId);
       if (playerIndex < 0) streamError("WRONG_ROSTER");
       players.splice(playerIndex, 1);
-      const result = await invokeGame("onPlayerLeave", () => game.onPlayerLeave(event.playerId, state));
+      const result = await invokeGame("onPlayerLeave", () => game.onPlayerLeave(event.playerId, state, [...players]));
       applyStateResult(result);
       state = result.state;
       if (result.broadcasts) broadcasts.push(...(result.broadcasts as JsonValue[]));
@@ -311,7 +311,7 @@ async function applySingleStep<TState>(
       if (result.playerViews !== undefined) playerViews = result.playerViews as Record<string, JsonValue>;
     } else {
       if (typeof game.onCommand !== "function") streamError("UNSUPPORTED_FEATURE");
-      const result = await invokeGame("onCommand", () => game.onCommand!(event.command, state));
+      const result = await invokeGame("onCommand", () => game.onCommand!(event.command, state, [...players]));
       applyStateResult(result);
       state = result.state;
       if (result.broadcasts) broadcasts.push(...(result.broadcasts as JsonValue[]));
@@ -332,7 +332,7 @@ async function applySingleStep<TState>(
   } catch (error) {
     streamError("INVALID_ACTION", error instanceof Error ? error.message : undefined);
   }
-  const tickResult = await invokeGame("tick", () => game.tick(tickContext, state));
+  const tickResult = await invokeGame("tick", () => game.tick(tickContext, state, [...players]));
   validateGameTickResult(tickResult, inputs, players, privateViewsRequired);
   state = tickResult.state;
   if (tickResult.broadcasts) broadcasts.push(...(tickResult.broadcasts as JsonValue[]));
@@ -450,7 +450,7 @@ class NodeStreamSession<TState = unknown> {
       if (!Object.hasOwn(message, "players")) {
         streamError("WRONG_ROSTER", "Hydrate requires the active players roster.");
       }
-      validatePlayerRoster(players);
+      validatePlayerRoster(players, true);
       const activePlayers = players as string[];
       validateRosterBounds(activePlayers, manifest);
       if (Object.hasOwn(message, "resyncPlayers")) {

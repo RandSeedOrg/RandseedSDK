@@ -168,7 +168,7 @@ function validateTickRequest(value: unknown): TickRequest {
     throw new RequestError(400, "INVALID_STATE", "state is required.");
   }
   if (Object.hasOwn(body, "players")) {
-    validateRequest<string[]>(body.players, validatePlayerRoster, "WRONG_ROSTER");
+    validateRequest<string[]>(body.players, value => validatePlayerRoster(value, true), "WRONG_ROSTER");
   }
   return {
     ctx: normalizeTickContext(ctx),
@@ -210,7 +210,7 @@ function validateCommandRequest(value: unknown): {
   const command = validateRequest<GameCommand>(body.command, validateCommand, "INVALID_ACTION");
   const { state } = validateStateRequest(body);
   if (Object.hasOwn(body, "players")) {
-    validateRequest<string[]>(body.players, validatePlayerRoster, "WRONG_ROSTER");
+    validateRequest<string[]>(body.players, value => validatePlayerRoster(value, true), "WRONG_ROSTER");
   }
   return {
     command: normalizeGameCommand(command),
@@ -465,12 +465,13 @@ export function createGameServer(
       if (method === "POST" && pathname === "/tick") {
         const body = validateTickRequest(await readJsonBody(req));
         const manifest = await getManifest();
-        requireProjectionRoster(body.players, manifest);
+        requireProjectionRoster(body.players, manifest, true);
         if (body.players !== undefined
           && body.ctx.inputs.some(input => !body.players!.includes(input.playerId))) {
           throw new RequestError(400, "WRONG_ROSTER", "Every input playerId must belong to the active roster.");
         }
-        const result = await callGame(() => game.tick(body.ctx, body.state));
+        const callbackPlayers = body.players === undefined ? undefined : [...body.players];
+        const result = await callGame(() => game.tick(body.ctx, body.state, callbackPlayers));
         validateGameTickResult(
           result,
           body.ctx.inputs,
@@ -488,7 +489,8 @@ export function createGameServer(
         if (body.players !== undefined && !body.players.includes(body.playerId)) {
           throw new RequestError(400, "WRONG_ROSTER", "A joining player must be included in the resulting roster.");
         }
-        const result = await callGame(() => game.onPlayerJoin(body.playerId, body.state));
+        const callbackPlayers = body.players === undefined ? undefined : [...body.players];
+        const result = await callGame(() => game.onPlayerJoin(body.playerId, body.state, callbackPlayers));
         validateGameStateResult(result, body.players, manifest.playerViewMode === "private");
         sendJson(res, 200, result);
         return;
@@ -501,7 +503,8 @@ export function createGameServer(
         if (body.players !== undefined && body.players.includes(body.playerId)) {
           throw new RequestError(400, "WRONG_ROSTER", "A leaving player must be absent from the resulting roster.");
         }
-        const result = await callGame(() => game.onPlayerLeave(body.playerId, body.state));
+        const callbackPlayers = body.players === undefined ? undefined : [...body.players];
+        const result = await callGame(() => game.onPlayerLeave(body.playerId, body.state, callbackPlayers));
         validateGameStateResult(result, body.players, manifest.playerViewMode === "private");
         sendJson(res, 200, result);
         return;
@@ -527,8 +530,9 @@ export function createGameServer(
         }
         const body = validateCommandRequest(await readJsonBody(req));
         const manifest = await getManifest();
-        requireProjectionRoster(body.players, manifest);
-        const result = await callGame(() => game.onCommand!(body.command, body.state));
+        requireProjectionRoster(body.players, manifest, true);
+        const callbackPlayers = body.players === undefined ? undefined : [...body.players];
+        const result = await callGame(() => game.onCommand!(body.command, body.state, callbackPlayers));
         validateGameStateResult(result, body.players, manifest.playerViewMode === "private");
         sendJson(res, 200, result);
         return;

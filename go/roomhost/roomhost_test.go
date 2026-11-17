@@ -16,21 +16,21 @@ import (
 )
 
 type fixtureDocument struct {
-	ProtocolVersion       int              `json:"protocolVersion"`
-	Manifest              GameManifest     `json:"manifest"`
-	Config                MatchConfig      `json:"config"`
-	InitResponse          InitResult       `json:"initResponse"`
-	TickRequest           TickRequest      `json:"tickRequest"`
-	TickResponse          TickResult       `json:"tickResponse"`
-	PlayerEventRequest    PlayerEventRequest `json:"playerEventRequest"`
-	PlayerEventResponse   PlayerEventResult  `json:"playerEventResponse"`
-	IsGameOverRequest     IsGameOverRequest  `json:"isGameOverRequest"`
-	GameOverResponse      GameResult         `json:"gameOverResponse"`
-	CommandRequest        CommandRequest     `json:"commandRequest"`
-	CommandResponse       CommandResult      `json:"commandResponse"`
-	PRNGVectors           []prngFixtureVector `json:"prngVectors"`
-	ChaCha20Vectors       []chacha20FixtureVector `json:"chacha20Vectors"`
-	DeriveSeedVectors     []deriveSeedFixtureVector `json:"deriveSeedVectors"`
+	ProtocolVersion     int                       `json:"protocolVersion"`
+	Manifest            GameManifest              `json:"manifest"`
+	Config              MatchConfig               `json:"config"`
+	InitResponse        InitResult                `json:"initResponse"`
+	TickRequest         TickRequest               `json:"tickRequest"`
+	TickResponse        TickResult                `json:"tickResponse"`
+	PlayerEventRequest  PlayerEventRequest        `json:"playerEventRequest"`
+	PlayerEventResponse PlayerEventResult         `json:"playerEventResponse"`
+	IsGameOverRequest   IsGameOverRequest         `json:"isGameOverRequest"`
+	GameOverResponse    GameResult                `json:"gameOverResponse"`
+	CommandRequest      CommandRequest            `json:"commandRequest"`
+	CommandResponse     CommandResult             `json:"commandResponse"`
+	PRNGVectors         []prngFixtureVector       `json:"prngVectors"`
+	ChaCha20Vectors     []chacha20FixtureVector   `json:"chacha20Vectors"`
+	DeriveSeedVectors   []deriveSeedFixtureVector `json:"deriveSeedVectors"`
 }
 
 type prngFixtureVector struct {
@@ -161,8 +161,8 @@ type summaryServer struct {
 
 func (s summaryServer) IsGameOver(context.Context, IsGameOverRequest) (GameResult, error) {
 	return GameResult{
-		Over: true,
-		Summary: s.summary,
+		Over:            true,
+		Summary:         s.summary,
 		NextMatchPolicy: &NextMatchPolicy{Mode: NextMatchCloseRoom},
 	}, nil
 }
@@ -170,9 +170,9 @@ func (s summaryServer) IsGameOver(context.Context, IsGameOverRequest) (GameResul
 func TestGameOverSummaryValidation(t *testing.T) {
 	fixture := loadFixture(t)
 	tests := []struct {
-		name string
+		name    string
 		summary string
-		status int
+		status  int
 	}{
 		{"missing", ``, http.StatusInternalServerError},
 		{"null", `null`, http.StatusInternalServerError},
@@ -209,9 +209,9 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 	var response struct {
-		Status  string  `json:"status"`
-		GameID  string  `json:"gameId"`
-		Uptime  float64 `json:"uptime"`
+		Status string  `json:"status"`
+		GameID string  `json:"gameId"`
+		Uptime float64 `json:"uptime"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode health response: %v", err)
@@ -587,6 +587,17 @@ func TestRequestBodyLimit(t *testing.T) {
 	}
 }
 
+func TestLegacyUnkeyedPublicStructLiteralsRemainSourceCompatible(t *testing.T) {
+	_ = GameManifest{"title", "1.0", 1, 2, 5, false, nil, nil}
+	_ = TickRequest{TickContext{}, json.RawMessage(`{}`)}
+	_ = PlayerEventRequest{"player", json.RawMessage(`{}`)}
+	_ = CommandRequest{Command{}, json.RawMessage(`{}`)}
+	_ = InitResult{json.RawMessage(`{}`), nil, nil}
+	_ = TickResult{json.RawMessage(`{}`), nil, false, nil}
+	_ = PlayerEventResult{json.RawMessage(`{}`), nil, nil}
+	_ = CommandResult{json.RawMessage(`{}`), nil, nil}
+}
+
 func TestSafeIntegerUpperBoundsAreAccepted(t *testing.T) {
 	matchConfig := []byte(`{"matchId":"m","gameId":"g","players":["p"],"matchSeq":9007199254740991}`)
 	var config MatchConfig
@@ -598,7 +609,7 @@ func TestSafeIntegerUpperBoundsAreAccepted(t *testing.T) {
 	}
 
 	tickRequest := []byte(`{"ctx":{"tick":9007199254740991,"inputs":[{"playerId":"p","data":null,"timestamp":9007199254740991}],"elapsedSeconds":0},"state":null}`)
-	var request TickRequest
+	var request TickRequestV1
 	if err := json.Unmarshal(tickRequest, &request); err != nil {
 		t.Fatalf("decode max safe tick request: %v", err)
 	}

@@ -27,6 +27,88 @@ func validManifest(manifest GameManifest) bool {
 	return manifest.ResultDefinition == nil || manifest.ResultDefinition.Validate() == nil
 }
 
+func validManifestV1(manifest GameManifestV1) bool {
+	if !validManifest(manifest.GameManifest) {
+		return false
+	}
+	if manifest.PlayerViewMode != "" && manifest.PlayerViewMode != PlayerViewPrivate {
+		return false
+	}
+	return manifest.PlayerViewSchemaVersion == nil ||
+		(*manifest.PlayerViewSchemaVersion == 1 && manifest.PlayerViewMode == PlayerViewPrivate)
+}
+
+const maxPlayerViewBytes = 64 * 1024
+const maxPlayerViewsBytes = 1024 * 1024
+
+func validRoster(players []string, allowEmpty bool, maximum int) bool {
+	if len(players) > maximum || (!allowEmpty && len(players) == 0) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(players))
+	for _, playerID := range players {
+		if strings.TrimSpace(playerID) == "" {
+			return false
+		}
+		if _, exists := seen[playerID]; exists {
+			return false
+		}
+		seen[playerID] = struct{}{}
+	}
+	return true
+}
+
+func validRequestRoster(data []byte, players []string, required bool, maximum int, allowEmpty bool) (bool, bool) {
+	fields, ok := objectFields(data)
+	if !ok {
+		return false, false
+	}
+	raw, present := fields["players"]
+	if !present {
+		return !required, false
+	}
+	if isJSONNull(raw) || !isJSONArray(raw) || !validRoster(players, allowEmpty, maximum) {
+		return false, true
+	}
+	return true, true
+}
+
+func validPlayerViews(views map[string]json.RawMessage, players []string, rosterPresent bool, required bool) bool {
+	if views == nil {
+		return !required
+	}
+	if !rosterPresent || len(views) != len(players) {
+		return false
+	}
+	roster := make(map[string]struct{}, len(players))
+	for _, playerID := range players {
+		roster[playerID] = struct{}{}
+	}
+	for playerID, view := range views {
+		if strings.TrimSpace(playerID) == "" || len(view) == 0 || !json.Valid(view) {
+			return false
+		}
+		if _, exists := roster[playerID]; !exists {
+			return false
+		}
+		encodedView, err := json.Marshal(view)
+		if err != nil || len(encodedView) > maxPlayerViewBytes {
+			return false
+		}
+	}
+	encodedMap, err := json.Marshal(views)
+	return err == nil && len(encodedMap) <= maxPlayerViewsBytes
+}
+
+func playersContain(players []string, playerID string) bool {
+	for _, candidate := range players {
+		if candidate == playerID {
+			return true
+		}
+	}
+	return false
+}
+
 func validMatchConfig(config MatchConfig, data []byte) bool {
 	if strings.TrimSpace(config.MatchID) == "" || strings.TrimSpace(config.GameID) == "" {
 		return false
@@ -96,7 +178,7 @@ func validMatchConfig(config MatchConfig, data []byte) bool {
 	return true
 }
 
-func validTickRequest(request TickRequest, data []byte) bool {
+func validTickRequest(request TickRequestV1, data []byte) bool {
 	root, ok := objectFields(data)
 	if !ok {
 		return false
@@ -151,13 +233,26 @@ func validTickRequest(request TickRequest, data []byte) bool {
 			return false
 		}
 	}
+	if valid, present := validRequestRoster(data, request.Players, false, 100, true); !valid {
+		return false
+	} else if present {
+		for _, input := range request.Ctx.Inputs {
+			if !playersContain(request.Players, input.PlayerID) {
+				return false
+			}
+		}
+	}
 	return true
 }
 
-func validPlayerEventRequest(request PlayerEventRequest, data []byte) bool {
+func validPlayerEventRequest(request PlayerEventRequestV1, data []byte) bool {
 	fields, ok := objectFields(data)
 	state, hasState := fields["state"]
-	return ok && strings.TrimSpace(request.PlayerID) != "" && hasState && json.Valid(state)
+	if !ok || strings.TrimSpace(request.PlayerID) == "" || !hasState || !json.Valid(state) {
+		return false
+	}
+	valid, _ := validRequestRoster(data, request.Players, false, 100, true)
+	return valid
 }
 
 func validIsGameOverRequest(request IsGameOverRequest, data []byte) bool {
@@ -166,12 +261,16 @@ func validIsGameOverRequest(request IsGameOverRequest, data []byte) bool {
 	return ok && hasState && len(request.State) > 0 && json.Valid(state)
 }
 
-func validCommandRequest(request CommandRequest, data []byte) bool {
+func validCommandRequest(request CommandRequestV1, data []byte) bool {
 	fields, ok := objectFields(data)
 	state, hasState := fields["state"]
 	command, hasCommand := fields["command"]
-	return ok && hasState && len(request.State) > 0 && json.Valid(state) &&
-		hasCommand && isJSONObject(command) && validCommand(request.Command)
+	if !ok || !hasState || len(request.State) == 0 || !json.Valid(state) ||
+		!hasCommand || !isJSONObject(command) || !validCommand(request.Command) {
+		return false
+	}
+	valid, _ := validRequestRoster(data, request.Players, false, 100, true)
+	return valid
 }
 
 func validCommand(command Command) bool {
@@ -182,22 +281,62 @@ func validCommand(command Command) bool {
 }
 
 func validInitResult(result InitResult) bool {
+	return validInitResultForRoster(result, nil, false, false)
+}
+
+func validInitResultForRoster(result InitResult, players []string, rosterPresent bool, requireViews bool) bool {
 	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
-		validateGameResultUnits(result.ResultUnits, nil) == nil
+		!requireViews && validateGameResultUnits(result.ResultUnits, nil) == nil
 }
 
 func validTickResult(result TickResult) bool {
+	return validTickResultForRoster(result, nil, false, false)
+}
+
+func validTickResultForRoster(result TickResult, players []string, rosterPresent bool, requireViews bool) bool {
 	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
-		validateGameResultUnits(result.ResultUnits, nil) == nil
+		!requireViews && validateGameResultUnits(result.ResultUnits, nil) == nil
 }
 
 func validPlayerEventResult(result PlayerEventResult) bool {
+	return validPlayerEventResultForRoster(result, nil, false, false)
+}
+
+func validPlayerEventResultForRoster(result PlayerEventResult, players []string, rosterPresent bool, requireViews bool) bool {
 	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
-		validateGameResultUnits(result.ResultUnits, nil) == nil
+		!requireViews && validateGameResultUnits(result.ResultUnits, nil) == nil
 }
 
 func validCommandResult(result CommandResult) bool {
+	return validCommandResultForRoster(result, nil, false, false)
+}
+
+func validCommandResultForRoster(result CommandResult, players []string, rosterPresent bool, requireViews bool) bool {
 	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
+		!requireViews && validateGameResultUnits(result.ResultUnits, nil) == nil
+}
+
+func validInitResultV1ForRoster(result InitResultV1, players []string, rosterPresent bool, requireViews bool) bool {
+	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
+		validPlayerViews(result.PlayerViews, players, rosterPresent, requireViews) &&
+		validateGameResultUnits(result.ResultUnits, nil) == nil
+}
+
+func validTickResultV1ForRoster(result TickResultV1, players []string, rosterPresent bool, requireViews bool) bool {
+	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
+		validPlayerViews(result.PlayerViews, players, rosterPresent, requireViews) &&
+		validateGameResultUnits(result.ResultUnits, nil) == nil
+}
+
+func validPlayerEventResultV1ForRoster(result PlayerEventResultV1, players []string, rosterPresent bool, requireViews bool) bool {
+	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
+		validPlayerViews(result.PlayerViews, players, rosterPresent, requireViews) &&
+		validateGameResultUnits(result.ResultUnits, nil) == nil
+}
+
+func validCommandResultV1ForRoster(result CommandResultV1, players []string, rosterPresent bool, requireViews bool) bool {
+	return validJSON(result.State) && validBroadcasts(result.Broadcasts) &&
+		validPlayerViews(result.PlayerViews, players, rosterPresent, requireViews) &&
 		validateGameResultUnits(result.ResultUnits, nil) == nil
 }
 

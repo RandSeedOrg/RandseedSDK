@@ -92,6 +92,13 @@ export function validateGameManifest(manifest: unknown): asserts manifest is Gam
   if (Object.hasOwn(manifest, "playerViewMode") && manifest.playerViewMode !== "private") {
     throw new SdkProtocolError("INVALID_MANIFEST", "playerViewMode must be 'private' when provided.");
   }
+  if (Object.hasOwn(manifest, "playerViewSchemaVersion")
+    && (manifest.playerViewSchemaVersion !== 1 || manifest.playerViewMode !== "private")) {
+    throw new SdkProtocolError(
+      "INVALID_MANIFEST",
+      "playerViewSchemaVersion must be 1 and requires playerViewMode private.",
+    );
+  }
   if (Object.hasOwn(manifest, "optionsSchema")) {
     const schema = manifest.optionsSchema;
     if (typeof schema !== "boolean" && !isRecord(schema)) {
@@ -180,9 +187,11 @@ export function validateMatchConfig(config: unknown): asserts config is MatchCon
   }
 }
 
-export function validatePlayerRoster(value: unknown): asserts value is string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
-    throw new SdkProtocolError("WRONG_ROSTER", "players must contain between 1 and 100 player IDs.");
+export function validatePlayerRoster(value: unknown, allowEmpty = false): asserts value is string[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.length > 100) {
+    throw new SdkProtocolError("WRONG_ROSTER", allowEmpty
+      ? "players must contain at most 100 player IDs."
+      : "players must contain between 1 and 100 player IDs.");
   }
   const players = new Set<string>();
   for (const playerId of value) {

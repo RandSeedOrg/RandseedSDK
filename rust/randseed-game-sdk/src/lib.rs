@@ -65,5 +65,5 @@ pub use types::{
     InitResult, IsGameOverRequest, MatchConfig, MatchOptions, MatchSummary, NextMatchPolicy,
     PlayerEventRequest, PlayerEventResult, PlayerViewMode, RatioMetricAggregation,
     ResultMetricScope, ResultOutcome, SimpleMetricAggregation, TickContext, TickInput, TickRequest,
-    TickResult, MAX_PLAYER_VIEW_BYTES,
+    TickRequestWithPlayers, TickResult, MAX_PLAYER_VIEW_BYTES,
 };

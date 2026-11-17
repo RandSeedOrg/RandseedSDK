@@ -29,6 +29,7 @@ use axum::{
 };
 use futures_util::FutureExt;
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -186,7 +187,7 @@ fn validate_roster(
     manifest: &GameManifest,
     require_minimum: bool,
 ) -> Result<(), SdkError> {
-    if players.is_empty()
+    if (require_minimum && players.is_empty())
         || players.len() > manifest.max_players as usize
         || (require_minimum && players.len() < manifest.min_players as usize)
         || players.iter().any(|id| id.trim().is_empty())
@@ -216,6 +217,22 @@ async fn get_validated_manifest<G: GameServer>(game: &G) -> Result<GameManifest,
 }
 
 struct ProtocolJson<T>(T);
+
+#[derive(Deserialize)]
+struct TickRequestWire {
+    ctx: crate::types::TickContext,
+    state: serde_json::Value,
+    #[serde(default, deserialize_with = "deserialize_present_option")]
+    players: Option<Option<Vec<String>>>,
+}
+
+fn deserialize_present_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
 
 impl<S, T> FromRequest<S> for ProtocolJson<T>
 where
@@ -298,7 +315,7 @@ fn classify_deserialization_error<T>(value: &serde_json::Value) -> SdkErrorCode 
         {
             return SdkErrorCode::WrongRoster;
         }
-    } else if type_name.ends_with("TickRequest") {
+    } else if type_name.ends_with("TickRequest") || type_name.ends_with("TickRequestWire") {
         return SdkErrorCode::InvalidAction;
     } else if type_name.ends_with("PlayerEventRequest") {
         return SdkErrorCode::WrongRoster;
@@ -447,17 +464,38 @@ async fn handle_stream<G: GameServer>(
     resp
 }
 
+fn valid_platform_game_id(game_id: &str) -> bool {
+    !game_id.is_empty()
+        && game_id.len() <= 64
+        && game_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
 async fn handle_health<G: GameServer>(State(state): State<Arc<AppState<G>>>) -> impl IntoResponse {
-    let uptime = state.start_time.elapsed().as_secs_f64();
+    let Some(game_id) = state
+        .game_id
+        .as_deref()
+        .filter(|id| valid_platform_game_id(id))
+    else {
+        let code = SdkErrorCode::InternalError;
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: code.as_str(),
+                retryable: code.retryable(),
+                error: "The platform RANDSEED_GAME_ID is unavailable or invalid.".into(),
+                creator_action: code.creator_action(),
+            }),
+        )
+            .into_response();
+    };
     (
         StatusCode::OK,
         Json(HealthResponse {
             status: "ok".into(),
-            game_id: state
-                .game_id
-                .clone()
-                .unwrap_or_else(|| "randseed-game".into()),
-            uptime: Some(uptime),
+            game_id: game_id.to_string(),
+            uptime: Some(state.start_time.elapsed().as_secs_f64()),
         }),
     )
         .into_response()
@@ -629,7 +667,7 @@ async fn handle_init<G: GameServer>(
 
 async fn handle_tick<G: GameServer>(
     State(state): State<Arc<AppState<G>>>,
-    ProtocolJson(req): ProtocolJson<TickRequest>,
+    ProtocolJson(req): ProtocolJson<TickRequestWire>,
 ) -> impl IntoResponse {
     if let Err(error) = req.ctx.validate() {
         return map_error_to_response(SdkError::protocol_with_message(
@@ -644,26 +682,39 @@ async fn handle_tick<G: GameServer>(
         Ok(manifest) => manifest,
         Err(error) => return map_error_to_response(error).into_response(),
     };
-    let roster = if req.players.is_empty() {
-        if manifest.player_view_mode == Some(PlayerViewMode::Private) {
+    let private_views = manifest.player_view_mode == Some(PlayerViewMode::Private);
+    let players = match req.players {
+        None if private_views => {
             return map_error_to_response(SdkError::protocol(SdkErrorCode::WrongRoster))
                 .into_response();
         }
-        None
-    } else {
-        if let Err(error) = validate_roster(&req.players, &manifest, false) {
-            return map_error_to_response(error).into_response();
-        }
-        if req
-            .ctx
-            .inputs
-            .iter()
-            .any(|input| !req.players.contains(&input.player_id))
-        {
+        None => None,
+        Some(None) => {
             return map_error_to_response(SdkError::protocol(SdkErrorCode::WrongRoster))
                 .into_response();
         }
-        Some(req.players.clone())
+        Some(Some(players)) if players.is_empty() => {
+            if !req.ctx.inputs.is_empty() {
+                return map_error_to_response(SdkError::protocol(SdkErrorCode::WrongRoster))
+                    .into_response();
+            }
+            Some(players)
+        }
+        Some(Some(players)) => {
+            if let Err(error) = validate_roster(&players, &manifest, false) {
+                return map_error_to_response(error).into_response();
+            }
+            if req
+                .ctx
+                .inputs
+                .iter()
+                .any(|input| !players.contains(&input.player_id))
+            {
+                return map_error_to_response(SdkError::protocol(SdkErrorCode::WrongRoster))
+                    .into_response();
+            }
+            Some(players)
+        }
     };
     let submitted_action_ids = req
         .ctx
@@ -682,7 +733,13 @@ async fn handle_tick<G: GameServer>(
         return map_error_to_response(SdkError::protocol(SdkErrorCode::InvalidAction))
             .into_response();
     }
-    match call_game(state.game.tick_ext(req)).await {
+    let roster = players.clone();
+    let request = TickRequest {
+        ctx: req.ctx,
+        state: req.state,
+        players: players.unwrap_or_default(),
+    };
+    match call_game(state.game.tick_ext(request)).await {
         Ok(res) if !result_units_are_valid(res.result_units.as_deref()) => {
             invalid_result_units_response(res.result_units.as_deref())
         }
@@ -850,8 +907,10 @@ async fn handle_command<G: GameServer>(
             .into_response();
     }
     if let Some(players) = req.players.as_deref() {
-        if let Err(error) = validate_roster(players, &manifest, false) {
-            return map_error_to_response(error).into_response();
+        if !players.is_empty() {
+            if let Err(error) = validate_roster(players, &manifest, false) {
+                return map_error_to_response(error).into_response();
+            }
         }
     }
     let active_players = req.players.clone();
@@ -958,13 +1017,15 @@ where
 
 /// Start the game server on `0.0.0.0:{port}`.
 pub async fn run_game_server<G: GameServer>(game: G, port: u16) -> Result<(), SdkError> {
-    let router = create_game_router(Arc::new(game), None);
+    let game_id = std::env::var("RANDSEED_GAME_ID").ok();
+    let router = create_game_router(Arc::new(game), game_id);
     serve_router_on_port(router, port).await
 }
 
 /// Start a strongly typed [`TypedGameServer`] on `0.0.0.0:{port}`.
 pub async fn run_typed_game_server<T: TypedGameServer>(game: T, port: u16) -> Result<(), SdkError> {
-    let router = create_typed_game_router(Arc::new(game), None);
+    let game_id = std::env::var("RANDSEED_GAME_ID").ok();
+    let router = create_typed_game_router(Arc::new(game), game_id);
     serve_router_on_port(router, port).await
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"os"
 
 	"github.com/randseedorg/randseedsdk/go/roomhost"
 )
@@ -19,7 +20,7 @@ type counterState struct {
 }
 
 func (counterServer) GameID() string {
-	return "cooperative-counter"
+	return os.Getenv("RANDSEED_GAME_ID")
 }
 
 func (counterServer) Manifest() roomhost.GameManifest {

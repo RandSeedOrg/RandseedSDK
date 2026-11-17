@@ -1,0 +1,15 @@
+{
+  "hydrate": {
+    "type": "hydrate",
+    "matchId": "private-empty-roster-v1",
+    "tickRateHz": 10.0,
+    "tick": 2,
+    "state": {
+      "players": []
+    },
+    "players": [],
+    "playerViews": {},
+    "replay": [],
+    "resyncPlayers": []
+  }
+}

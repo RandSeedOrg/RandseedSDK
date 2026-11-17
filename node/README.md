@@ -14,7 +14,10 @@ npm install github:RandSeedOrg/RandseedSDK#main
 This installs the backend SDK from GitHub; it is not an npm-registry release.
 The browser SDK is separate and is installed from npm as
 `@randseed/game-sdk`.
-Pin a reviewed tag or commit instead of `main` for reproducible builds.
+Pin a reviewed tag or commit instead of `main` for reproducible builds. The
+private-view changes described below are pending review and are not present in
+the current `main` until merged; this command alone does not install that
+unreleased implementation.
 The package requires Node.js 20 or later and supports ESM imports. JavaScript
 and TypeScript use the same SDK; TypeScript declarations are included.
 
@@ -77,6 +80,110 @@ sanitized errors for failed game callbacks. It also exposes the stateful
 requires the active roster, each step must advance one contiguous tick, and
 per-player views are matched exactly to the active seats with no canonical-state
 fallback. `actionResults` are returned in `stepResult` and in replay hydration.
+
+## Private room-host player views
+
+Public manifest wire format (omit both private fields):
+
+```json
+{
+  "title": "Room Counter",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false
+}
+```
+
+Omit `playerViewMode` and `playerViewSchemaVersion` for an ordinary public
+game. For per-seat private projections set `playerViewMode: "private"`.
+Room-host v1 is the default when `playerViewSchemaVersion` is omitted; an
+explicit `1` is optional and accepted only with private mode. `null`, an
+unsupported version, a schema version without private mode, a null mode, or
+`playerViewMode: "public"` is invalid.
+
+Private default-v1 manifest:
+
+```json
+{
+  "title": "Hidden Hand",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false,
+  "playerViewMode": "private"
+}
+```
+
+A valid `optionsSchema` is a JSON Schema object or boolean (not `null`, an
+array, string, or number). For example:
+
+```js
+optionsSchema: {
+  type: "object",
+  properties: { mode: { type: "string", enum: ["casual", "ranked"] } },
+  additionalProperties: false,
+}
+```
+
+The SDK checks that the manifest value has this object-or-boolean shape; it
+does not execute the schema against the supplied match options.
+
+Optional explicit-v1 form:
+
+```json
+{
+  "title": "Hidden Hand",
+  "version": "1.0.0",
+  "minPlayers": 2,
+  "maxPlayers": 4,
+  "tickRateHz": 5,
+  "persistentTable": false,
+  "playerViewMode": "private",
+  "playerViewSchemaVersion": 1
+}
+```
+
+The `init` callback uses `config.players`. Private `/tick` and `/onCommand`
+requests require the active `players` roster. Join and leave requests include
+the resulting roster; it includes the joining player and excludes the leaving
+player. The SDK supplies this optional third callback argument to `tick`,
+`onCommand`, `onPlayerJoin`, and `onPlayerLeave` so existing two-argument
+callbacks remain source-compatible. Return one `playerViews[playerId]` JSON
+value for every active seat from `init`, `tick`, `onPlayerJoin`, `onPlayerLeave`,
+and `onCommand`. The SDK rejects missing, malformed, missing-key, extra-key,
+or oversized views; each serialized view is at most 64 KiB and the entire JSON
+map is at most 1 MiB.
+
+The returned `state` remains canonical and is for the trusted room host only.
+Each per-player view must exclude opponent-private data, hidden random state,
+and all other non-recipient secrets. The host must deliver only the map entry
+for the authenticated recipient; missing views never fall back to canonical
+state. These SDK checks cannot determine whether a game callback classified
+every field correctly. Do not have a browser call the lifecycle endpoints.
+
+For deployment, `RANDSEED_GAME_ID` must be the actual platform-assigned RandSeed
+Game ID matching `^[A-Za-z0-9_-]{1,64}$`; do not use a repository slug, guessed
+ID, or runtime label. The SDK listens on the supplied port (the examples use
+`PORT` with `8080` as the local default). Check both endpoints on the actual
+bound port:
+
+```sh
+curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8080/manifest
+```
+
+`/health` checks process availability and the configured platform Game ID;
+`/manifest` independently checks and returns the game configuration. A healthy
+process does not by itself prove the manifest is valid or that platform private
+routing is enabled.
+
+As of 2026-11-17, this cross-SDK alignment is pending independent review and is
+not a published Node package release. Gamecreator PR #340 remains open and is
+not deployed. Verify the SDK version and target host rollout before enabling
+private routing.
 
 ## Data continuity across releases
 

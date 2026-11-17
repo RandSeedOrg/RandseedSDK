@@ -124,8 +124,7 @@ pub enum StreamClientMessage {
         tick: u64,
         /// Full authoritative checkpoint state.
         state: Value,
-        /// Active player roster at the checkpoint.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Required active player roster at the checkpoint, including an explicit empty array.
         players: Vec<String>,
         /// Per-player views stored alongside the checkpoint, required for private views without replay.
         #[serde(
@@ -655,8 +654,7 @@ fn private_views_required(manifest: &GameManifest) -> bool {
 
 fn validate_active_roster(players: &[String], manifest: &GameManifest) -> Result<(), SdkError> {
     let unique = players.iter().collect::<HashSet<_>>();
-    if players.is_empty()
-        || players.len() > manifest.max_players as usize
+    if players.len() > manifest.max_players as usize
         || players.len() > 100
         || unique.len() != players.len()
         || players.iter().any(|player_id| player_id.trim().is_empty())

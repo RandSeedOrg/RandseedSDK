@@ -1,0 +1,31 @@
+{
+  "protocolVersion": 1,
+  "manifestCases": [
+    {"name": "public-legacy-omitted-fields", "valid": true, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false}},
+    {"name": "private-default-v1", "valid": true, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "private"}},
+    {"name": "private-explicit-v1", "valid": true, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "private", "playerViewSchemaVersion": 1}},
+    {"name": "private-decimal-version-v1", "valid": true, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "private", "playerViewSchemaVersion": 1.0}},
+    {"name": "private-exponent-version-v1", "valid": true, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "private", "playerViewSchemaVersion": 1e0}},
+    {"name": "explicit-null-version", "valid": false, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "private", "playerViewSchemaVersion": null}},
+    {"name": "unsupported-version", "valid": false, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "private", "playerViewSchemaVersion": 2}},
+    {"name": "version-without-private-mode", "valid": false, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewSchemaVersion": 1}},
+    {"name": "null-mode", "valid": false, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": null}},
+    {"name": "unsupported-mode", "valid": false, "manifest": {"title": "Private View Fixture", "version": "1.0.0", "minPlayers": 2, "maxPlayers": 4, "tickRateHz": 5, "persistentTable": false, "playerViewMode": "public"}}
+  ],
+  "players": ["seat-a", "seat-b"],
+  "playerViews": {"seat-a": {"hand": ["ACE_OF_SPADES"], "viewer": "seat-a"}, "seat-b": {"hand": ["KING_OF_CLUBS"], "viewer": "seat-b"}},
+  "invalidPlayerViews": {
+    "missing-seat": {"seat-a": {"hand": ["ACE_OF_SPADES"]}},
+    "extra-seat": {"seat-a": {"hand": ["ACE_OF_SPADES"]}, "seat-b": {"hand": ["KING_OF_CLUBS"]}, "seat-c": {"hand": ["QUEEN_OF_HEARTS"]}}
+  },
+  "lifecycle": {
+    "initRequest": {"matchId": "match-private-v1", "gameId": "fixture-game_1", "players": ["seat-a", "seat-b"], "matchSeq": 1},
+    "initResponse": {"state": {"hands": {"seat-a": ["ACE_OF_SPADES"], "seat-b": ["KING_OF_CLUBS"]}}, "playerViews": {"seat-a": {"hand": ["ACE_OF_SPADES"], "viewer": "seat-a"}, "seat-b": {"hand": ["KING_OF_CLUBS"], "viewer": "seat-b"}}},
+    "tickRequest": {"ctx": {"tick": 1, "inputs": [], "commands": [], "elapsedSeconds": 0.2}, "state": {"round": 1}, "players": ["seat-a", "seat-b"]},
+    "tickResponse": {"state": {"hands": {"seat-a": ["ACE_OF_SPADES"], "seat-b": ["KING_OF_CLUBS"]}}, "playerViews": {"seat-a": {"hand": ["ACE_OF_SPADES"], "viewer": "seat-a"}, "seat-b": {"hand": ["KING_OF_CLUBS"], "viewer": "seat-b"}}, "persist": false},
+    "joinRequest": {"playerId": "seat-c", "state": {"round": 1}, "players": ["seat-a", "seat-b", "seat-c"]},
+    "leaveRequest": {"playerId": "seat-b", "state": {"round": 1}, "players": ["seat-a"]},
+    "commandRequest": {"command": {"type": "reset", "data": {}}, "state": {"round": 1}, "players": ["seat-a", "seat-b"]}
+  },
+  "limits": {"singleViewBytes": 65536, "viewMapBytes": 1048576}
+}
