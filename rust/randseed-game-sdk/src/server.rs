@@ -907,7 +907,7 @@ async fn handle_command<G: GameServer>(
             .into_response();
     }
     if let Some(players) = req.players.as_deref() {
-        if !(players.is_empty() && manifest.player_view_mode == Some(PlayerViewMode::Private)) {
+        if !players.is_empty() {
             if let Err(error) = validate_roster(players, &manifest, false) {
                 return map_error_to_response(error).into_response();
             }
