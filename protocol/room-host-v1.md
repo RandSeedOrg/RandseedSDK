@@ -461,19 +461,20 @@ that must be visible from new rooms or releases.
 `persist: true` requests room-state snapshotting; it does not write an
 independent game-level record. Result Units are the game-to-host result-event
 contract; the host must accept and archive them, and a query API is separately
-required to display historical rankings. Gamecreator currently exposes
-Result Unit leaderboard queries to trusted internal services, not as a general
-Server SDK game-facing API. The current Gamecreator room Server SDK therefore
-does not provide a general cross-room, cross-release storage-and-query service
-for game-owned rankings or progression. Do not document `PlatformClient.sql`,
-room KV, or emitted Result Units as that service.
+required to display historical rankings. Gamecreator exposes Result Unit
+queries only to trusted internal services, not as a general Server SDK API.
+The current Server SDK source separately defines a versioned, explicitly
+game-authored `platform.data` document protocol. The Gamecreator implementation
+remains gated off by default; it does not make Result Units queryable, support
+arbitrary queries, or backfill earlier Room/Archive data. See
+[Game Data Protocol v1](./game-data-v1.md) for its wire contract and limitations.
+Do not document `PlatformClient.sql`, room KV, or emitted Result Units as a
+game-level shared store.
 
-If a target host separately provides a game-level service, its contract must
-document stable game/player keys, environment and release scope, retention,
-read/query authorization, schema migration, deletion, and backfill. Otherwise,
-cross-release game-owned rankings require a new platform storage/query
-capability or a game-owned backend that is reachable through an approved
-integration.
+Any game-level service must document stable game/environment scope,
+read/query authorization, schema migration, deletion, retention, and backfill.
+The current `platform.data` foundation explicitly has no historical backfill;
+separately enabled capabilities must not silently imply one.
 
 Before deploying an upgrade, test with existing records: publish a new runtime
 version, create a room under it, and verify that the intended historical

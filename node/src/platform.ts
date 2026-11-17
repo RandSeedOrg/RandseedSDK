@@ -1,3 +1,4 @@
+import { PlatformDataClient } from './game-data.js';
 import type {
   PlatformSqlResponse,
   PlatformBroadcastResponse,
@@ -13,12 +14,14 @@ export interface PlatformClientOptions {
 }
 
 export class PlatformClient {
+  readonly data: PlatformDataClient;
   private readonly customFetch: typeof fetch;
   private readonly vhostMap: Record<string, string>;
 
   constructor(options: PlatformClientOptions = {}) {
     this.customFetch = options.fetch || globalThis.fetch;
     this.vhostMap = options.vhostMap || {};
+    this.data = new PlatformDataClient({ fetch: this.customFetch, vhostMap: this.vhostMap });
   }
 
   private resolveUrl(vhost: string, path: string): string {
@@ -93,14 +96,7 @@ export class PlatformClient {
     };
   }
 
-  async getPlayers(): Promise<Array<{
-    playerId: string;
-    joinedAt: number;
-    displayName?: string | null;
-    avatarUrl?: string | null;
-    /** Whether this player owns the game for the current room; metadata only, not authorization evidence. */
-    isGameCreator?: boolean;
-  }>> {
+  async getPlayers(): Promise<Array<{ playerId: string; joinedAt: number }>> {
     const response = await this.customFetch(this.resolveUrl("platform.players", "/"), {
       method: "GET",
     });
@@ -109,7 +105,17 @@ export class PlatformClient {
     }
 
     const data = (await response.json()) as PlatformPlayersResponse;
-    return data.players || [];
+    const players: unknown = data?.players;
+    const isValidPlayer = (player: unknown): player is { playerId: string; joinedAt: number } => {
+      if (typeof player !== "object" || player === null || Array.isArray(player)) return false;
+      const row = player as Record<string, unknown>;
+      return typeof row.playerId === "string" && row.playerId.trim().length > 0
+        && Number.isSafeInteger(row.joinedAt) && (row.joinedAt as number) >= 0;
+    };
+    if (!Array.isArray(players) || !players.every(isValidPlayer)) {
+      throw new Error("Online player roster contains an invalid member.");
+    }
+    return players.map(({ playerId, joinedAt }) => ({ playerId, joinedAt }));
   }
 
   async kvGet<T = unknown>(key: string): Promise<T | null> {

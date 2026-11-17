@@ -10,3 +10,5 @@ export * from "./replay.js";
 export * from "./platform.js";
 export * from "./stream.js";
 export * from "./server.js";
+
+export * from "./game-data.js";

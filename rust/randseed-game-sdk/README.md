@@ -74,6 +74,104 @@ receipts, and a terminal policy, see
 paired cross-language migration guide is
 [`protocol/ai-multiplayer-migration.md`](../../protocol/ai-multiplayer-migration.md).
 
+## Explicit game-owned data (Game Data protocol v1)
+
+`PlatformClient::data()` exposes the typed game-owned document API. The current
+Gamecreator host gate `GAME_DATA_STORE_ENABLED` remains off by default, so this
+SDK source API does not promise that any deployment has enabled the service.
+`DataPlugin` is separate and remains disabled. The host derives game ID and the
+full environment from verified room admission; a game cannot choose scope.
+Records are shared across rooms and runtime releases of the same game and
+environment, while games and public/preview/sandbox plus dev/test/production
+environments remain isolated.
+
+The feature is forward-only: game code must explicitly write new records. It
+does not import Room SQLite/snapshots/KV, old Result Units, Blackjack archives,
+legacy client boards, profiles, principals, or R2 replay data. A store call and
+a Room transition are separate Durable Object operations, not one transaction;
+a callback is not a durable outbox. Use deterministic idempotency keys and
+retry the same payload after transient failures. Exact committed-transition
+mirroring is not available in this stage.
+
+```rust
+use randseed_game_sdk::{
+    GameDataFieldType, GameDataFilter, GameDataFilterOperator, GameDataQuery,
+    GameDataSchema, GameDataSort, GameDataSortDirection, PlatformClient, SdkError,
+};
+use serde_json::json;
+use std::collections::BTreeMap;
+
+async fn save_and_read(platform: &PlatformClient) -> Result<(), SdkError> {
+    let data = platform.data();
+    let schema = GameDataSchema {
+        version: 1,
+        fields: BTreeMap::from([
+            ("season".into(), GameDataFieldType::Number),
+            ("score".into(), GameDataFieldType::Number),
+            ("label".into(), GameDataFieldType::String),
+        ]),
+        indexes: vec!["score".into()],
+        compound_indexes: vec![["season".into(), "score".into()]],
+    };
+    data.register_schema("seasonScores", &schema).await?;
+    let prior = data.get("seasonScores", "player-summary").await?;
+    data.put(
+        "match-42/player-summary",
+        "seasonScores",
+        "player-summary",
+        prior.map(|record| record.revision).unwrap_or(0),
+        json!({"season": 2026, "score": 1200, "label": "final"}),
+    ).await?;
+    let page = data.query(&GameDataQuery {
+        collection: "seasonScores".into(),
+        filters: vec![GameDataFilter {
+            field: "season".into(),
+            op: GameDataFilterOperator::Eq,
+            value: json!(2026),
+        }],
+        order_by: Some(GameDataSort {
+            field: "score".into(),
+            direction: GameDataSortDirection::Desc,
+        }),
+        limit: 50,
+        cursor: None,
+    }).await?;
+    let _next_cursor = page.next_cursor;
+    Ok(())
+}
+```
+
+This compound query requires the ordered pair `["season", "score"]`: one
+`season == X` equality filter followed by ascending or descending `score`, with
+document ID as stable tie-breaker. Same-field indexed queries and unfiltered
+ID listing are supported; arbitrary cross-field filters, multiple predicates,
+joins, offset paging, and arbitrary SQL are not. Aggregates support `count`,
+`sum`, `min`, `max`, and `avg` with at most one single-index filter and an
+explicit scan limit no greater than 1,000. Unsupported plans and limit
+exceedance are errors, never unbounded scans. Numeric sums and averages use
+exact binary64 accumulation and final nearest-even rounding; unsafe integer
+results return an error. JSON integers outside JavaScript’s safe-integer range
+are rejected. Rust preserves negative-zero sign in documents; numeric indexes
+treat negative and positive zero as equal.
+
+Writes use CAS revisions and deletion tombstones. Recreate with the tombstone
+revision. An atomic `mutate` batch is limited to 25 unique records; retrying the
+same idempotency key and payload returns the prior receipt, while changing the
+payload conflicts. Schema upgrades are additive; older releases can re-register
+unchanged declarations and omit later sparse fields. Do not newly index an
+existing unindexed string field, since older long values could violate the
+index bound. The [Game Data v1 protocol](../../protocol/game-data-v1.md)
+documents exact errors and quotas.
+
+Game-owned caps include 64 KiB per document, 512 KiB per write request, 100
+records per query page, 32 collections and 8,192 live documents per scope,
+16,384 stored records including tombstones per scope, and 128 MiB live serialized
+data per scope. Each collection supports at most 32 fields, 16 single-field and
+16 compound indexes. Across environments, an Archive supports 128 game-declared
+indexes and 16,384 normalized index entries. Each scope retains at most 4,096
+receipts for 30 days and 4,096 cursors for 15 minutes; room rate is 120 requests
+per minute and tracked rooms are capped at 10,000 per scope.
+
 ## Result Units
 
 Declare a versioned `GameResultDefinition` in `GameManifest`, then return
@@ -113,13 +211,10 @@ retries; corrections are append-only events.
 - `PlatformClient` calls host services; do not make those calls a source of
   unrecorded authoritative simulation inputs.
 
-`PlatformClient::get_players()` includes optional `display_name` and
-`avatar_url` values for online room members when a public profile is available.
-It may also include `is_game_creator`, indicating whether a player owns the
-game for the current room. Missing profile fields and unavailable ownership
-information remain absent. These are platform-supplied metadata fields, not
-authorization evidence; independently verify ownership and permissions before
-protected operations.
+`PlatformClient::get_players()` returns only connected players’ game-scoped
+opaque `player_id` and `joined_at`. Profile, principal, account, and ownership
+metadata are not available to game code, including when a legacy host includes
+them in its response. Display profiles belong in the trusted Player Shell.
 
 Run the crate checks from this directory:
 

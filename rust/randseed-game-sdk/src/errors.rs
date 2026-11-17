@@ -136,6 +136,15 @@ pub enum SdkError {
     #[error("Platform request failed (HTTP {0}): {1}")]
     PlatformHttp(u16, String),
 
+    /// A game-owned data request failed with a sanitized stable service code.
+    #[error("Game data request failed (HTTP {status}, {code}).")]
+    PlatformData {
+        /// HTTP status from the game-data service.
+        status: u16,
+        /// Stable, sanitized service error code.
+        code: String,
+    },
+
     /// An unexpected internal or runtime error occurred.
     #[error("Internal error: {0}")]
     Internal(String),
@@ -176,13 +185,27 @@ impl SdkError {
             Self::Serialization(_)
             | Self::Network(_)
             | Self::PlatformHttp(_, _)
+            | Self::PlatformData { .. }
             | Self::Internal(_) => SdkErrorCode::InternalError,
         }
     }
 
     /// Whether retrying without changing the request or game code may succeed.
     pub fn retryable(&self) -> bool {
-        self.code().retryable()
+        match self {
+            Self::PlatformData { status, code } => {
+                *status == 429 || (*status >= 500 && *status < 507 && code != "GAME_DATA_DISABLED")
+            }
+            _ => self.code().retryable(),
+        }
+    }
+
+    /// Return the stable service code for a game-data error, if present.
+    pub fn platform_data_code(&self) -> Option<&str> {
+        match self {
+            Self::PlatformData { code, .. } => Some(code),
+            _ => None,
+        }
     }
 
     /// Return safe creator-facing guidance, never raw internal details.
@@ -190,6 +213,7 @@ impl SdkError {
         match self {
             Self::Protocol { message, .. } => message.clone(),
             Self::Validation(message) => message.clone(),
+            Self::PlatformData { code, .. } => format!("Game data request failed ({}). Check the schema, document revision, game status, and documented limits.", code),
             _ => self.code().creator_action().to_string(),
         }
     }

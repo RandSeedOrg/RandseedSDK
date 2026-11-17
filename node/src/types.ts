@@ -240,14 +240,7 @@ export interface PlatformSendResponse {
 }
 
 export interface PlatformPlayersResponse {
-  players: Array<{
-    playerId: string;
-    joinedAt: number;
-    displayName?: string | null;
-    avatarUrl?: string | null;
-    /** Whether this player owns the game for the current room; metadata only, not authorization evidence. */
-    isGameCreator?: boolean;
-  }>;
+  players: Array<{ playerId: string; joinedAt: number }>;
 }
 
 export interface PlatformKvResponse<T = unknown> {

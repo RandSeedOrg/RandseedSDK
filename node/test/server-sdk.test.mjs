@@ -578,7 +578,7 @@ describe("Node.js Server SDK", () => {
         status: 200,
         json: async () => ({
           players: [
-            { playerId: "p1", joinedAt: 1700000000000, displayName: "Player One", avatarUrl: "https://game.example/api/public/profile-avatar?name=Player%20One", isGameCreator: true },
+            { playerId: "p1", joinedAt: 1700000000000, displayName: "PII_SENTINEL_NAME", avatarUrl: "PII_SENTINEL_AVATAR", isGameCreator: true, principalId: "PII_SENTINEL_PRINCIPAL" },
             { playerId: "p2", joinedAt: 1700000001000 },
           ],
         }),
@@ -587,11 +587,23 @@ describe("Node.js Server SDK", () => {
       const client = new PlatformClient({ fetch: mockFetch });
       const players = await client.getPlayers();
       assert.equal(players.length, 2);
-      assert.equal(players[0].playerId, "p1");
-      assert.equal(players[0].displayName, "Player One");
-      assert.equal(players[0].avatarUrl, "https://game.example/api/public/profile-avatar?name=Player%20One");
-      assert.equal(players[0].isGameCreator, true);
-      assert.equal(players[1].displayName, undefined);
+      assert.deepEqual(players[0], { playerId: "p1", joinedAt: 1700000000000 });
+      assert.deepEqual(players[1], { playerId: "p2", joinedAt: 1700000001000 });
+      assert.doesNotMatch(JSON.stringify(players), /PII_SENTINEL|avatar|Creator/);
+    });
+
+    test("rejects an entire online roster when any member is malformed", async () => {
+      const client = new PlatformClient({
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ players: [
+            { playerId: "valid-player", joinedAt: 123 },
+            { playerId: "invalid-player", joinedAt: "123" },
+          ] }),
+        }),
+      });
+      await assert.rejects(client.getPlayers(), /online player roster contains an invalid member/i);
     });
 
     test("reads, writes, and deletes KV values", async () => {
