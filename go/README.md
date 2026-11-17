@@ -151,6 +151,39 @@ independent review and is not a Go module release. Gamecreator PR #340 remains
 open and is not deployed. Verify the exact installed SDK release and target
 platform rollout before enabling private routing.
 
+## Room player display profiles
+
+`roomhost.NewPlatformClient(transport).GetPlayers(ctx)` requests the connected
+room roster from the `platform.players` virtual host. Pass `nil` to use Go's
+default HTTP transport, or inject a `http.RoundTripper` for a custom runtime
+transport or tests. The request honors its context and returns transport,
+HTTP-status, and malformed-response errors.
+
+Each `roomhost.PlayerInfo` retains the required `PlayerID` and `JoinedAt`
+fields and may include pointer-valued `DisplayName`, `AvatarURL`, and
+`IsGameCreator` hints. Missing or `null` optional fields are `nil`; a supplied
+`false` `IsGameCreator` value remains distinguishable from an absent value.
+Unknown response fields—including principal or account data—are ignored and
+are not included in the typed result.
+
+`IsGameCreator` is presentation metadata only. Never use it to authorize game
+actions; use trusted host-side identity and policy.
+
+```go
+players, err := roomhost.NewPlatformClient(nil).GetPlayers(ctx)
+if err != nil {
+    return err
+}
+for _, player := range players {
+    name := player.PlayerID
+    if player.DisplayName != nil {
+        name = *player.DisplayName
+    }
+    // IsGameCreator is only a display hint, not an authorization check.
+    _ = name
+}
+```
+
 ## Result Units
 
 Declare `GameResultDefinition` in `GameManifest` (or its `GameManifestV1` wrapper), then return `ResultUnits`

@@ -38,7 +38,7 @@ pub use game_data::{
     GameDataSortDirection, GameDataWriteReceipt, GameDataWriteReceiptItem, GameDataWriteRequest,
     GAME_DATA_PROTOCOL_VERSION,
 };
-pub use platform::{PlatformClient, PlayerInfo};
+pub use platform::{PlatformClient, PlayerInfo, PlayerProfileInfo};
 pub use prng::{
     derive_seed, derive_seed_hex, derive_seed_strs, encode_seed_hex, is_valid_seed_hex,
     legacy_seed_from_bytes, parse_seed_hex, ChaCha20Rng, ChaCha20State, Mulberry32,

@@ -379,10 +379,13 @@ project's `package.json`, or use an `.mjs` entry point.
 ## Additional APIs
 
 - `PlatformClient` calls the documented room platform virtual hosts.
-  `getPlayers()` exposes only connected players’ game-scoped opaque `playerId`
-  and `joinedAt`. Profile, principal, account, and ownership metadata are not
-  available to game code, including when a legacy host includes them in its
-  response. Display profiles belong in the trusted Player Shell.
+  `getPlayers()` returns connected players’ game-scoped opaque `playerId` and
+  `joinedAt`, plus the optional display-only `displayName`, `avatarUrl`, and
+  `isGameCreator` fields. Missing or `null` optional fields are accepted;
+  present `null` values remain `null`, while absent fields remain omitted.
+  Principal, account, ownership, and all other unlisted metadata are stripped.
+  `isGameCreator` is a display hint only and must never be used for authorization
+  or privileged actions. See the [online-player profile contract](../protocol/room-host-v1.md#online-player-roster-and-display-profiles).
 - `ChaCha20Rng`, `deriveSeed`, and `deriveSeedHex` provide deterministic 20-round
   ChaCha20 simulation randomness (matching `rand_chacha::ChaCha20Rng`) seeded
   from the host-injected 256-bit VRF root seed (`options.randomSeed`), with

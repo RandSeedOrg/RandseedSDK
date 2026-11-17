@@ -1427,9 +1427,19 @@ async fn test_platform_client_custom_mock() {
                                 "joinedAt": 1000,
                                 "displayName": "PII_SENTINEL_NAME",
                                 "avatarUrl": "PII_SENTINEL_AVATAR",
-                                "isGameCreator": true
+                                "isGameCreator": false,
+                                "principal": "PRIVATE_PRINCIPAL_SENTINEL",
+                                "unrecognized": "PRIVATE_UNKNOWN_SENTINEL"
                             },
-                            { "playerId": "p2", "joinedAt": 2000 }
+                            {
+                                "playerId": "p2",
+                                "joinedAt": 2000,
+                                "displayName": null,
+                                "avatarUrl": null,
+                                "isGameCreator": null,
+                                "principal": "PRIVATE_NULL_ROW_SENTINEL"
+                            },
+                            { "playerId": "p3", "joinedAt": 3000 }
                         ]
                     })),
                 )
@@ -1483,14 +1493,108 @@ async fn test_platform_client_custom_mock() {
     assert!(s_deliv);
 
     let players = client.get_players().await.unwrap();
-    assert_eq!(players.len(), 2);
+    assert_eq!(players.len(), 3);
     assert_eq!(players[0].player_id, "p1");
     let encoded_players = serde_json::to_string(&players).unwrap();
     assert!(!encoded_players.contains("PII_SENTINEL"));
     assert!(!encoded_players.contains("isGameCreator"));
 
+    let profile_players = client.get_players_with_profiles().await.unwrap();
+    assert_eq!(profile_players.len(), 3);
+    assert_eq!(
+        profile_players[0].display_name.as_deref(),
+        Some("PII_SENTINEL_NAME")
+    );
+    assert_eq!(
+        profile_players[0].avatar_url.as_deref(),
+        Some("PII_SENTINEL_AVATAR")
+    );
+    assert_eq!(profile_players[0].is_game_creator, Some(false));
+    assert_eq!(profile_players[1].display_name, None);
+    assert_eq!(profile_players[1].avatar_url, None);
+    assert_eq!(profile_players[1].is_game_creator, None);
+    assert_eq!(profile_players[2].display_name, None);
+    assert_eq!(profile_players[2].avatar_url, None);
+    assert_eq!(profile_players[2].is_game_creator, None);
+    let encoded_profiles = serde_json::to_string(&profile_players).unwrap();
+    assert!(!encoded_profiles.contains("PRIVATE_PRINCIPAL_SENTINEL"));
+    assert!(!encoded_profiles.contains("PRIVATE_UNKNOWN_SENTINEL"));
+    assert!(!encoded_profiles.contains("PRIVATE_NULL_ROW_SENTINEL"));
+
     let val = client.kv_get("key1").await.unwrap();
     assert_eq!(val, Some(json!("val1")));
+}
+
+#[tokio::test]
+async fn test_platform_profile_players_reports_invalid_types_http_and_transport_errors() {
+    let mock_router = axum::Router::new()
+        .route(
+            "/platform.players-bad/",
+            axum::routing::get(|| async {
+                (
+                    axum::http::StatusCode::OK,
+                    axum::Json(json!({
+                        "players": [{
+                            "playerId": "p1",
+                            "joinedAt": 1000,
+                            "isGameCreator": "false"
+                        }]
+                    })),
+                )
+            }),
+        )
+        .route(
+            "/platform.players-error/",
+            axum::routing::get(|| async {
+                (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "platform unavailable",
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move {
+        axum::serve(listener, mock_router).await.unwrap();
+    });
+
+    let client_for = |vhost: &str| {
+        let mut vhost_map = HashMap::new();
+        vhost_map.insert("platform.players".into(), format!("{base_url}/{vhost}"));
+        PlatformClient::with_vhost_map(vhost_map)
+    };
+
+    let invalid_type_error = client_for("platform.players-bad")
+        .get_players_with_profiles()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            invalid_type_error,
+            SdkError::Network(_) | SdkError::Serialization(_)
+        ),
+        "invalid JSON field type returned {invalid_type_error:?}"
+    );
+
+    let http_error = client_for("platform.players-error")
+        .get_players_with_profiles()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(http_error, SdkError::PlatformHttp(503, _)),
+        "HTTP error returned {http_error:?}"
+    );
+
+    let mut unreachable_map = HashMap::new();
+    unreachable_map.insert("platform.players".into(), "http://127.0.0.1:0".into());
+    let transport_error = PlatformClient::with_vhost_map(unreachable_map)
+        .get_players_with_profiles()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(transport_error, SdkError::Network(_)),
+        "transport error returned {transport_error:?}"
+    );
 }
 
 #[test]

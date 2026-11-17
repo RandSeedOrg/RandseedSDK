@@ -553,6 +553,33 @@ the game-defined carryover. With `wait_for_ready`, platform readiness and its
 timeout determine when the next match may start. With `close_room`, a new
 allocation is needed for another room.
 
+### Online-player roster and display profiles
+
+The platform's online-player endpoint returns an object with a `players` array
+of currently connected players. Each member MUST contain a non-empty,
+game-scoped opaque string `playerId` and a non-negative safe-integer `joinedAt`
+timestamp. It MAY contain these additional display-only values:
+
+| Field | Accepted JSON values |
+| --- | --- |
+| `displayName` | string or `null` |
+| `avatarUrl` | string or `null` |
+| `isGameCreator` | boolean or `null` |
+
+Each optional field may also be absent. Clients MUST accept both absent and
+`null` optional fields for compatibility with older hosts. Node preserves an
+explicit `null` as `null` and leaves an absent field omitted. Rust `Option` and
+Go `nil` representations normalize both absent and `null` to no value; their
+serialization may omit the field. Callers MUST NOT rely on distinguishing
+absent from `null` across SDK languages. A present non-null value of the wrong
+JSON type makes the roster invalid. Clients MUST return only the listed fields
+and MUST discard every other field, including principal, account, or ownership
+metadata, even if a host includes it in a response.
+
+`isGameCreator` is a display hint, not an authorization claim. Games MUST NOT
+use it to grant privileges or authorize actions. Profile information is for
+in-room display; it does not change player identity or roster membership.
+
 ### Cross-release data continuity
 
 Room state, session checkpoints, and game-defined carryover are recovery

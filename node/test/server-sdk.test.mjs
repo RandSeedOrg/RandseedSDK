@@ -572,7 +572,7 @@ describe("Node.js Server SDK", () => {
       assert.equal(res.delivered, true);
     });
 
-    test("lists online players", async () => {
+    test("lists online players with only validated display profile fields", async () => {
       const mockFetch = async () => ({
         ok: true,
         status: 200,
@@ -580,16 +580,30 @@ describe("Node.js Server SDK", () => {
           players: [
             { playerId: "p1", joinedAt: 1700000000000, displayName: "PII_SENTINEL_NAME", avatarUrl: "PII_SENTINEL_AVATAR", isGameCreator: true, principalId: "PII_SENTINEL_PRINCIPAL" },
             { playerId: "p2", joinedAt: 1700000001000 },
+            { playerId: "p3", joinedAt: 1700000002000, displayName: null, avatarUrl: null, isGameCreator: false, principal: "PRIVATE_SENTINEL", extraField: "PRIVATE_SENTINEL" },
           ],
         }),
       });
 
       const client = new PlatformClient({ fetch: mockFetch });
       const players = await client.getPlayers();
-      assert.equal(players.length, 2);
-      assert.deepEqual(players[0], { playerId: "p1", joinedAt: 1700000000000 });
+      assert.equal(players.length, 3);
+      assert.deepEqual(players[0], {
+        playerId: "p1",
+        joinedAt: 1700000000000,
+        displayName: "PII_SENTINEL_NAME",
+        avatarUrl: "PII_SENTINEL_AVATAR",
+        isGameCreator: true,
+      });
       assert.deepEqual(players[1], { playerId: "p2", joinedAt: 1700000001000 });
-      assert.doesNotMatch(JSON.stringify(players), /PII_SENTINEL|avatar|Creator/);
+      assert.deepEqual(players[2], {
+        playerId: "p3",
+        joinedAt: 1700000002000,
+        displayName: null,
+        avatarUrl: null,
+        isGameCreator: false,
+      });
+      assert.doesNotMatch(JSON.stringify(players), /PRINCIPAL|PRIVATE_SENTINEL/);
     });
 
     test("rejects an entire online roster when any member is malformed", async () => {
@@ -604,6 +618,37 @@ describe("Node.js Server SDK", () => {
         }),
       });
       await assert.rejects(client.getPlayers(), /online player roster contains an invalid member/i);
+    });
+
+    test("reports invalid optional profile field types explicitly", async () => {
+      for (const [field, value] of [
+        ["displayName", 123],
+        ["avatarUrl", false],
+        ["isGameCreator", "false"],
+      ]) {
+        const client = new PlatformClient({
+          fetch: async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ players: [{ playerId: "p1", joinedAt: 123, [field]: value }] }),
+          }),
+        });
+        await assert.rejects(client.getPlayers(), new RegExp(`invalid ${field} field`));
+      }
+    });
+
+    test("reports online-player HTTP and transport failures", async () => {
+      const httpClient = new PlatformClient({
+        fetch: async () => ({ ok: false, status: 503 }),
+      });
+      await assert.rejects(httpClient.getPlayers(), /online players \(HTTP 503\)/);
+
+      const transportClient = new PlatformClient({
+        fetch: async () => {
+          throw new TypeError("fetch failed");
+        },
+      });
+      await assert.rejects(transportClient.getPlayers(), /online players \(transport failure\)/);
     });
 
     test("reads, writes, and deletes KV values", async () => {
