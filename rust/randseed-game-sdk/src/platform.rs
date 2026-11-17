@@ -18,6 +18,39 @@ pub struct PlayerInfo {
     pub joined_at: u64,
 }
 
+/// Information about a connected player with optional display-profile hints.
+///
+/// These fields are presentation hints only. In particular,
+/// `is_game_creator` must not be used to authorize an action.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlayerProfileInfo {
+    /// Player identifier.
+    #[serde(rename = "playerId")]
+    pub player_id: String,
+    /// Connection time in epoch milliseconds.
+    #[serde(rename = "joinedAt")]
+    pub joined_at: u64,
+    /// Optional game-scoped display name.
+    #[serde(
+        rename = "displayName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub display_name: Option<String>,
+    /// Optional game-scoped avatar URL.
+    #[serde(rename = "avatarUrl", default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    /// Optional hint that the connected player created this game.
+    ///
+    /// This is display-only metadata, not an authorization signal.
+    #[serde(
+        rename = "isGameCreator",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub is_game_creator: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 struct SqlResponse {
     #[serde(default)]
@@ -42,6 +75,12 @@ struct SendResponse {
 struct PlayersResponse {
     #[serde(default)]
     players: Vec<PlayerInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfilePlayersResponse {
+    #[serde(default)]
+    players: Vec<PlayerProfileInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -188,6 +227,25 @@ impl PlatformClient {
         }
 
         let data: PlayersResponse = resp.json().await?;
+        Ok(data.players)
+    }
+
+    /// Return connected players and the optional display-profile hints exposed
+    /// by the room host.
+    ///
+    /// Missing and `null` optional fields are represented as `None`. Unknown
+    /// fields (including private account or principal data) are ignored.
+    /// `is_game_creator` is display-only and must not be used for authorization.
+    pub async fn get_players_with_profiles(&self) -> Result<Vec<PlayerProfileInfo>, SdkError> {
+        let url = self.resolve_url("platform.players", "/");
+        let resp = self.client.get(&url).send().await?;
+        let status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            let err_text = resp.text().await.unwrap_or_default();
+            return Err(SdkError::PlatformHttp(status, err_text));
+        }
+
+        let data: ProfilePlayersResponse = resp.json().await?;
         Ok(data.players)
     }
 

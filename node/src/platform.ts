@@ -3,6 +3,7 @@ import type {
   PlatformSqlResponse,
   PlatformBroadcastResponse,
   PlatformSendResponse,
+  PlatformPlayerInfo,
   PlatformPlayersResponse,
   PlatformKvResponse,
   PlatformKvMutationResponse,
@@ -96,17 +97,22 @@ export class PlatformClient {
     };
   }
 
-  async getPlayers(): Promise<Array<{ playerId: string; joinedAt: number }>> {
-    const response = await this.customFetch(this.resolveUrl("platform.players", "/"), {
-      method: "GET",
-    });
+  async getPlayers(): Promise<PlatformPlayerInfo[]> {
+    let response: Response;
+    try {
+      response = await this.customFetch(this.resolveUrl("platform.players", "/"), {
+        method: "GET",
+      });
+    } catch (error) {
+      throw new Error("Could not retrieve online players (transport failure).", { cause: error });
+    }
     if (!response.ok) {
       throw new Error(`Could not retrieve online players (HTTP ${response.status}).`);
     }
 
     const data = (await response.json()) as PlatformPlayersResponse;
     const players: unknown = data?.players;
-    const isValidPlayer = (player: unknown): player is { playerId: string; joinedAt: number } => {
+    const isValidPlayer = (player: unknown): player is Record<string, unknown> => {
       if (typeof player !== "object" || player === null || Array.isArray(player)) return false;
       const row = player as Record<string, unknown>;
       return typeof row.playerId === "string" && row.playerId.trim().length > 0
@@ -115,7 +121,31 @@ export class PlatformClient {
     if (!Array.isArray(players) || !players.every(isValidPlayer)) {
       throw new Error("Online player roster contains an invalid member.");
     }
-    return players.map(({ playerId, joinedAt }) => ({ playerId, joinedAt }));
+
+    for (const [index, player] of players.entries()) {
+      const row = player as Record<string, unknown>;
+      if (row.displayName !== undefined && row.displayName !== null && typeof row.displayName !== "string") {
+        throw new Error(`Online player roster member ${index} has an invalid displayName field.`);
+      }
+      if (row.avatarUrl !== undefined && row.avatarUrl !== null && typeof row.avatarUrl !== "string") {
+        throw new Error(`Online player roster member ${index} has an invalid avatarUrl field.`);
+      }
+      if (row.isGameCreator !== undefined && row.isGameCreator !== null && typeof row.isGameCreator !== "boolean") {
+        throw new Error(`Online player roster member ${index} has an invalid isGameCreator field.`);
+      }
+    }
+
+    return players.map((player) => {
+      const row = player as Record<string, unknown>;
+      const safePlayer: PlatformPlayerInfo = {
+        playerId: row.playerId as string,
+        joinedAt: row.joinedAt as number,
+      };
+      if (row.displayName !== undefined) safePlayer.displayName = row.displayName as string | null;
+      if (row.avatarUrl !== undefined) safePlayer.avatarUrl = row.avatarUrl as string | null;
+      if (row.isGameCreator !== undefined) safePlayer.isGameCreator = row.isGameCreator as boolean | null;
+      return safePlayer;
+    });
   }
 
   async kvGet<T = unknown>(key: string): Promise<T | null> {

@@ -303,10 +303,28 @@ retries; corrections are append-only events.
 - `PlatformClient` calls host services; do not make those calls a source of
   unrecorded authoritative simulation inputs.
 
-`PlatformClient::get_players()` returns only connected players’ game-scoped
-opaque `player_id` and `joined_at`. Profile, principal, account, and ownership
-metadata are not available to game code, including when a legacy host includes
-them in its response. Display profiles belong in the trusted Player Shell.
+`PlatformClient::get_players()` retains the original `PlayerInfo` contract with
+only `player_id` and `joined_at`. For game-scoped display hints, call
+`get_players_with_profiles()`, which returns `PlayerProfileInfo` with optional
+`display_name`, `avatar_url`, and `is_game_creator` fields. Missing and `null`
+optional fields both decode as `None`; unknown fields are ignored. Principal,
+account, and other private metadata are not exposed by this typed API.
+
+`is_game_creator` is a display hint only, not an authorization signal. Keep
+authorization tied to trusted host-side identity and policy.
+
+```rust
+use randseed_game_sdk::{PlatformClient, SdkError};
+
+async fn show_room_players(platform: &PlatformClient) -> Result<(), SdkError> {
+    for player in platform.get_players_with_profiles().await? {
+        let label = player.display_name.as_deref().unwrap_or(&player.player_id);
+        let is_creator_hint = player.is_game_creator.unwrap_or(false);
+        println!("{label} (creator hint: {is_creator_hint})");
+    }
+    Ok(())
+}
+```
 
 Run the crate checks from this directory:
 

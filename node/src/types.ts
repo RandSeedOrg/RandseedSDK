@@ -245,8 +245,16 @@ export interface PlatformSendResponse {
   delivered: boolean;
 }
 
+export interface PlatformPlayerInfo {
+  playerId: string;
+  joinedAt: number;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  isGameCreator?: boolean | null;
+}
+
 export interface PlatformPlayersResponse {
-  players: Array<{ playerId: string; joinedAt: number }>;
+  players: PlatformPlayerInfo[];
 }
 
 export interface PlatformKvResponse<T = unknown> {
