@@ -12,3 +12,4 @@ export * from "./stream.js";
 export * from "./server.js";
 
 export * from "./game-data.js";
+export * from "./diagnostics.js";
