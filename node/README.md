@@ -418,3 +418,15 @@ schema or assume they can be reconstructed from older archives. Missing fields
 are rejected rather than silently dropping data. Replay execution covers ticks
 through the last recorded input or command; applications must record their
 final tick separately if simulation continues after the last event.
+
+## Developer-initiated room timing diagnostics
+
+`runSerialBenchmark` measures a game-supplied callback serially in the current
+Node.js process and returns only `{ sampleCount, p50Ms, p95Ms }`. Choose an
+integer sample count from 1 through 100. The helper uses a monotonic clock,
+does not log or send telemetry, and propagates callback errors unchanged. It
+does not connect to a room, access a host or container, measure browser RTT, or
+represent room/action latency. Use only deterministic, non-side-effecting
+callbacks with isolated fixture state; never repeat real room mutations. See
+the [room sync performance guide](../protocol/room-sync-performance.md) for
+the Sandbox/Private Preview workflow and browser-side timing distinctions.
