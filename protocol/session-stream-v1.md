@@ -85,10 +85,15 @@ name players in the resulting active roster.
 
 `tick` must be the current tick plus one and remain a safe integer. `inputs`,
 `events`, and `resyncPlayers` default to empty arrays; if supplied, each must
-have the documented shape. An invalid action is normally a game-level
-`actionResults` entry with status `rejected`, not an exception or an ignored
-input. Result IDs must be unique and refer to action IDs submitted on that
-tick.
+have the documented shape. Both `actionId` and `actionSchemaId` may be absent
+from an input; a valid `actionId` may appear without a schema; and a valid pair
+is accepted. `actionSchemaId` without `actionId`, malformed identifiers, and
+explicit `null` values are invalid. Omitting the schema does not identify a
+controller or establish human identity; the separate `AgentActionRequest`
+continues to require `actionSchemaId`. An invalid action is normally a
+game-level `actionResults` entry with status `rejected`, not an exception or an
+ignored input. Result IDs must be unique and refer to action IDs submitted on
+that tick.
 
 ## Responses
 

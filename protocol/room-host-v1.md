@@ -348,9 +348,9 @@ game data correctly. The platform must send each view only to the authenticated
 recipient selected by the Room host; it must not fall back to canonical state.
 
 An Agent action binds an action ID to scope, room, match, player seat, controller
-lease epoch, source observation sequence, expected tick, action schema, and JSON
-payload. Retries with the same ID and identical payload are idempotent; reuse
-with a different payload is a conflict. Receipts distinguish `queued`,
+lease epoch, source observation sequence, expected tick, required action schema,
+and JSON payload. Retries with the same ID and identical payload are idempotent;
+reuse with a different payload is a conflict. Receipts distinguish `queued`,
 `applied`, `rejected`, and `unresolved`. A newer tick is not proof that a
 specific action was applied. A Skill decision is either `{ "kind": "act",
 "action": ..., "memory": ... }` or `{ "kind": "wait", "resumeAt": null,
@@ -413,10 +413,21 @@ Request:
 
 Each input has a `playerId` and a required JSON `data` value; `timestamp` is
 optional, is a non-negative safe integer, and is measured in epoch milliseconds.
+`actionId` and `actionSchemaId` are also optional tick-input metadata. Both
+fields may be absent; a valid `actionId` may appear without a schema; and a
+valid pair is accepted. `actionSchemaId` without `actionId`, malformed
+identifiers, and explicit `null` values are invalid. An omitted schema does not
+identify a controller or establish human identity. The separate
+`AgentActionRequest` continues to require `actionSchemaId`.
+
 `commands` is optional and defaults to an empty array. `tick` is a non-negative
 safe integer. `elapsedSeconds` is finite, non-negative cumulative match time
 derived from the host tick, not wall-clock time. Do not add successive
 `elapsedSeconds` values to calculate total duration.
+
+The game may return `actionResults` for submitted action IDs. Each result must
+refer to a unique `actionId` submitted on that tick and reports the game
+callback's outcome; the SDK does not manufacture an outcome for an input.
 
 Response:
 

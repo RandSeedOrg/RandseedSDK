@@ -102,7 +102,11 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
           },
           actionResults: ctx.inputs
             .filter(input => input.actionId)
-            .map(input => ({ actionId: input.actionId, status: "applied" })),
+            .map(input => ({
+              actionId: input.actionId,
+              status: input.data?.reject ? "rejected" : "applied",
+              ...(input.data?.reject ? { code: "INVALID_MOVE" } : {}),
+            })),
         };
       },
       onPlayerJoin: (_playerId, state) => ({ state }),
@@ -179,10 +183,17 @@ test("Node SDK advertises session-v1 headers and drives pipelined /stream sessio
         data: {},
         actionId: "act-1",
         actionSchemaId: "counter.action.v1",
+      }, {
+        playerId: "p2",
+        data: { reject: true },
+        actionId: "human-act-1",
       }],
     });
     assert.equal(stepped.type, "stepResult");
-    assert.deepEqual(stepped.actionResults, [{ actionId: "act-1", status: "applied" }]);
+    assert.deepEqual(stepped.actionResults, [
+      { actionId: "act-1", status: "applied" },
+      { actionId: "human-act-1", status: "rejected", code: "INVALID_MOVE" },
+    ]);
     assert.equal(JSON.stringify(stepped.playerViews.p1).includes("P2_CANARY"), false);
 
     const callbackProtocolError = await send({

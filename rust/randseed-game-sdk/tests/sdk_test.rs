@@ -5,9 +5,9 @@
 use async_trait::async_trait;
 use randseed_game_sdk::{
     create_game_router, evaluate_replay_storage_tier, validate_game_result_units,
-    validate_player_views, validate_replay_data_v2, AgentControlMode, AgentGameCapabilities,
-    AgentPlayerContract, AgentPlayerViewProjection, AgentPlayerViewRequest, CommandResult,
-    GameActionOutcome, GameActionResult, GameCommand, GameManifest, GameResult,
+    validate_player_views, validate_replay_data_v2, AgentActionRequest, AgentControlMode,
+    AgentGameCapabilities, AgentPlayerContract, AgentPlayerViewProjection, AgentPlayerViewRequest,
+    CommandResult, GameActionOutcome, GameActionResult, GameCommand, GameManifest, GameResult,
     GameResultDefinition, GameResultEvent, GameServer, HealthResponse, InitResult, MatchConfig,
     MatchOptions, MatchSummary, Mulberry32, NextMatchPolicy, PlatformClient, PlayerEventResult,
     ReplayDataV2, ReplayInputItem, ReplayStorageTier, SdkError, SdkErrorCode, TickContext,
@@ -276,10 +276,11 @@ fn tick_action_metadata_and_action_results_are_protocol_validated() {
         elapsed_seconds: 0.1,
     };
     assert!(context(None, None).validate().is_ok());
+    assert!(context(Some("human-action-1"), None).validate().is_ok());
     assert!(context(Some("action-1"), Some("action.v1"))
         .validate()
         .is_ok());
-    assert!(context(Some("action-1"), None).validate().is_err());
+    assert!(context(None, Some("action.v1")).validate().is_err());
     assert!(context(Some(""), Some("action.v1")).validate().is_err());
     assert!(context(Some("action-1"), Some("invalid schema"))
         .validate()
@@ -433,6 +434,25 @@ impl GameServer for MockGame {
         } else {
             None
         };
+        let omit_action_results = state["omitActionResults"].as_bool().unwrap_or(false);
+        let action_results = ctx
+            .inputs
+            .iter()
+            .filter_map(|input| {
+                input.action_id.as_ref().map(|action_id| GameActionResult {
+                    action_id: action_id.clone(),
+                    status: if input.data["reject"].as_bool().unwrap_or(false) {
+                        GameActionOutcome::Rejected
+                    } else {
+                        GameActionOutcome::Applied
+                    },
+                    code: input.data["reject"]
+                        .as_bool()
+                        .filter(|rejected| *rejected)
+                        .map(|_| "INVALID_MOVE".into()),
+                })
+            })
+            .collect::<Vec<_>>();
 
         Ok(TickResult {
             state,
@@ -441,7 +461,8 @@ impl GameServer for MockGame {
             persist: is_persist,
             joinable: None,
             result_units: None,
-            action_results: None,
+            action_results: (!omit_action_results && !action_results.is_empty())
+                .then_some(action_results),
         })
     }
 
@@ -938,6 +959,95 @@ async fn test_wire_protocol_endpoints_real_tcp() {
     assert_eq!(tick_res.state["score"], 10);
     assert_eq!(tick_res.state["tickCount"], 50);
     assert!(tick_res.persist);
+
+    let action_tick = client
+        .post(format!("{}/tick", base_url))
+        .json(&json!({
+            "ctx": {
+                "tick": 51,
+                "inputs": [
+                    {
+                        "playerId": "p1",
+                        "data": {},
+                        "actionId": "human-action-1"
+                    },
+                    {
+                        "playerId": "p2",
+                        "data": { "reject": true },
+                        "actionId": "paired-action-1",
+                        "actionSchemaId": "counter.action.v1"
+                    }
+                ],
+                "elapsedSeconds": 2.55
+            },
+            "state": { "score": 10, "tickCount": 50 },
+            "players": ["p1", "p2"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(action_tick.status(), 200);
+    let action_tick: serde_json::Value = action_tick.json().await.unwrap();
+    assert_eq!(
+        action_tick["actionResults"],
+        json!([
+            { "actionId": "human-action-1", "status": "applied" },
+            {
+                "actionId": "paired-action-1",
+                "status": "rejected",
+                "code": "INVALID_MOVE"
+            }
+        ])
+    );
+
+    let unreported_action = client
+        .post(format!("{}/tick", base_url))
+        .json(&json!({
+            "ctx": {
+                "tick": 51,
+                "inputs": [{
+                    "playerId": "p1",
+                    "data": {},
+                    "actionId": "unreported-action-1"
+                }],
+                "elapsedSeconds": 2.55
+            },
+            "state": { "score": 10, "tickCount": 50, "omitActionResults": true }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unreported_action.status(), 200);
+    let unreported_action: serde_json::Value = unreported_action.json().await.unwrap();
+    assert!(unreported_action.get("actionResults").is_none());
+
+    for input in [
+        json!({ "playerId": "p1", "data": {}, "actionSchemaId": "counter.action.v1" }),
+        json!({ "playerId": "p1", "data": {}, "actionId": "" }),
+        json!({ "playerId": "p1", "data": {}, "actionId": null }),
+        json!({ "playerId": "p1", "data": {}, "actionId": "action-1", "actionSchemaId": null }),
+        json!({
+            "playerId": "p1",
+            "data": {},
+            "actionId": "action-1",
+            "actionSchemaId": "invalid schema"
+        }),
+    ] {
+        let invalid_action = client
+            .post(format!("{}/tick", base_url))
+            .json(&json!({
+                "ctx": {
+                    "tick": 52,
+                    "inputs": [input],
+                    "elapsedSeconds": 2.6
+                },
+                "state": { "score": 10, "tickCount": 51 }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_action.status(), 400);
+    }
 
     let empty_tick = client
         .post(format!("{}/tick", base_url))
@@ -1735,6 +1845,33 @@ fn tick_input_deserializes_action_fields_without_polluting_data_and_rejects_null
     assert!(
         null_schema_id.is_err(),
         "explicit null actionSchemaId must fail deserialization"
+    );
+
+    let action_id_without_schema: TickInput = serde_json::from_value(json!({
+        "playerId": "p1",
+        "data": { "move": "up" },
+        "actionId": "human-action-1"
+    }))
+    .unwrap();
+    assert_eq!(
+        action_id_without_schema.action_id.as_deref(),
+        Some("human-action-1")
+    );
+    assert_eq!(action_id_without_schema.action_schema_id, None);
+}
+
+#[test]
+fn agent_action_request_requires_action_schema_id() {
+    let mut fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/fixtures/agent-player-v1.json"
+    ))
+    .unwrap();
+    fixture["actionRequest"]
+        .as_object_mut()
+        .unwrap()
+        .remove("actionSchemaId");
+    assert!(
+        serde_json::from_value::<AgentActionRequest>(fixture["actionRequest"].clone()).is_err()
     );
 }
 
