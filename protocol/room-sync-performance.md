@@ -85,6 +85,54 @@ authoritative decisions. If a callback depends on mutable setup, construct an
 isolated fixture per invocation and account for that setup in the measured
 scope. The helper has no direct access to the platform host or container.
 
+## Local Rust callback benchmark
+
+The Rust SDK exposes `run_serial_benchmark` for the same developer-initiated,
+in-process use. It accepts an async callback and a sample count from 1 through
+100, awaits each invocation before starting the next, discards successful
+callback values, and returns `{ sample_count, p50_ms, p95_ms }` in milliseconds.
+It uses `std::time::Instant` and the same one-based nearest-rank calculation as
+the Node helper. A callback failure stops sampling and is retained unchanged in
+`SerialBenchmarkError::Callback`; an invalid count is distinguished by
+`SerialBenchmarkError::InvalidSampleCount`.
+
+For example, benchmark a deterministic `GameServer::tick` against repeated,
+immutable fixture inputs:
+
+```rust
+use randseed_game_sdk::{
+    run_serial_benchmark, GameServer, SerialBenchmarkError, SerialBenchmarkResult, SdkError,
+    TickContext,
+};
+use serde_json::json;
+
+async fn benchmark_fixture_tick<G: GameServer>(
+    game: &G,
+) -> Result<SerialBenchmarkResult, SerialBenchmarkError<SdkError>> {
+    let context = TickContext {
+        tick: 7,
+        inputs: Vec::new(),
+        commands: Vec::new(),
+        elapsed_seconds: 0.05,
+    };
+    let fixture_state = json!({ "score": 41 });
+
+    run_serial_benchmark(
+        || game.tick(context.clone(), fixture_state.clone()),
+        30,
+    )
+    .await
+}
+```
+
+Only benchmark a deterministic game instance with isolated local fixtures and
+no external side effects. This times local callback execution; it does not
+mutate a real room, advance authoritative state, access the network, or measure
+room RTT/action latency. The Rust API is a local SDK-source addition; verify
+that the Rust package version used by a game contains it. It does not imply
+rollout of a browser SDK, Sandbox panel, or host feature. Neither language
+helper automatically runs callbacks, logs samples, or sends telemetry.
+
 ## Manual browser observations
 
 Use the application's ordinary, authorized room flow; do not call game-server

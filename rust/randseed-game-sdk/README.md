@@ -280,6 +280,19 @@ outbox. The trusted room host must validate the published definition, match,
 roster, source identity, and archive receipt. Keep event IDs stable across
 retries; corrections are append-only events.
 
+## Developer-initiated callback benchmark
+
+`run_serial_benchmark` measures an async callback serially in the current Rust
+process. It accepts 1 through 100 samples, uses `std::time::Instant`, and
+returns only the sample count and nearest-rank p50/p95 durations in
+milliseconds. Successful callback values are discarded; callback errors are
+returned unchanged inside `SerialBenchmarkError::Callback`. The helper does not
+log or send telemetry, contact a room or network, or measure room RTT/action
+latency. Use only deterministic callbacks with isolated fixtures and no
+external side effects; never repeat real room mutations. See the
+[room sync performance guide](../../protocol/room-sync-performance.md) for the
+Node/Rust comparison and measurement-layer distinctions.
+
 ## Protocol and determinism
 
 - Each request body is limited to 1 MiB. Match sequence numbers, ticks, and
