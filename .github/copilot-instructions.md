@@ -6,6 +6,9 @@ supported language implementations and shared protocol contracts. Use existing
 test fixtures and compatibility checks across languages where applicable; do
 not add a language, runtime, third-party dependency, or platform service without
 design approval.
+They apply alongside role-specific custom-agent prompts. If a role prompt
+conflicts with this repository-wide policy, follow this policy and report the
+conflict rather than silently relaxing the requirement.
 
 ## Requirement-to-Implementation Gate
 
