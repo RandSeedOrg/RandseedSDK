@@ -8,6 +8,7 @@
 pub mod agent_capabilities;
 pub mod agent_observation;
 pub mod agent_player_view;
+pub mod diagnostics;
 pub mod errors;
 pub mod game_data;
 pub mod platform;
@@ -30,6 +31,7 @@ pub use agent_player_view::{
     MAX_AGENT_PLAYER_ACTION_BYTES, MAX_AGENT_PLAYER_MEMORY_BYTES, MAX_AGENT_PLAYER_REQUEST_BYTES,
     MAX_AGENT_PLAYER_VIEW_BYTES,
 };
+pub use diagnostics::{run_serial_benchmark, SerialBenchmarkError, SerialBenchmarkResult};
 pub use errors::{SdkError, SdkErrorCode};
 pub use game_data::{
     GameDataAggregate, GameDataAggregateMetric, GameDataAggregateOperator, GameDataAggregateResult,
