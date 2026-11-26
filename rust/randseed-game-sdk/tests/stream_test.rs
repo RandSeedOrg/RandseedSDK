@@ -960,6 +960,10 @@ async fn sdk_migration_preflight_websocket_transport_covers_recovery_and_errors(
                 "data": { "delta": 1 },
                 "actionId": "ws-applied-1",
                 "actionSchemaId": "private.action.v1"
+            }, {
+                "playerId": "p2",
+                "data": { "delta": 1 },
+                "actionId": "ws-human-1"
             }],
             "events": [
                 { "type": "join", "playerId": "p2" },
@@ -973,7 +977,11 @@ async fn sdk_migration_preflight_websocket_transport_covers_recovery_and_errors(
     let step_one = read_websocket_json(&mut socket).await;
     assert_eq!(step_one["type"], "stepResult");
     assert_eq!(step_one["tick"], 1);
+    assert_eq!(step_one["actionResults"].as_array().unwrap().len(), 2);
     assert_eq!(step_one["actionResults"][0]["status"], "applied");
+    assert_eq!(step_one["actionResults"][0]["actionId"], "ws-applied-1");
+    assert_eq!(step_one["actionResults"][1]["actionId"], "ws-human-1");
+    assert_eq!(step_one["actionResults"][1]["status"], "applied");
     assert_eq!(step_one["playerViews"].as_object().unwrap().len(), 2);
 
     send_websocket_json(&mut socket, &json!({ "type": "step", "tick": 3 })).await;

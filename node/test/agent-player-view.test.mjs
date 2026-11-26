@@ -50,6 +50,9 @@ test("Agent player identifiers use UTF-8 bounds and reject C1 controls", () => {
 test("action requests, receipts, leases, and no-action Skill decisions match shared vectors", () => {
   assert.deepEqual(validateAgentControllerLease(fixture.lease), fixture.lease);
   assert.deepEqual(validateAgentActionRequest(fixture.actionRequest), fixture.actionRequest);
+  const missingActionSchema = { ...fixture.actionRequest };
+  delete missingActionSchema.actionSchemaId;
+  assert.throws(() => validateAgentActionRequest(missingActionSchema));
   assert.deepEqual(validateAgentActionReceipt(fixture.queuedReceipt), fixture.queuedReceipt);
   assert.deepEqual(validateAgentActionReceipt(fixture.appliedReceipt), fixture.appliedReceipt);
   assert.deepEqual(validateAgentActionReceipt(fixture.rejectedReceipt), fixture.rejectedReceipt);

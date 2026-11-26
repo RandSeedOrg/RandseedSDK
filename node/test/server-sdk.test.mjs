@@ -201,7 +201,7 @@ describe("Node.js Server SDK", () => {
       assert.equal(data.broadcasts.length, 1);
     });
 
-    test("TickContext requires paired, protocol-valid action identifiers", () => {
+    test("TickContext accepts optional action metadata with protocol-valid identifiers", () => {
       const context = actionId => ({
         tick: 1,
         inputs: [{
@@ -211,12 +211,26 @@ describe("Node.js Server SDK", () => {
         }],
         elapsedSeconds: 1,
       });
-      assert.doesNotThrow(() => validateTickContext(context("action-1")));
-      assert.throws(() => validateTickContext({
+      assert.doesNotThrow(() => validateTickContext(context()));
+      assert.doesNotThrow(() => validateTickContext({
         ...context("action-1"),
         inputs: [{ playerId: "player_a", data: {}, actionId: "action-1" }],
       }));
-      assert.throws(() => validateTickContext(context("")));
+      assert.doesNotThrow(() => validateTickContext(context("action-1")));
+      assert.throws(() => validateTickContext({
+        ...context("action-1"),
+        inputs: [{ playerId: "player_a", data: {}, actionSchemaId: "action.v1" }],
+      }));
+      for (const actionId of ["", null, "界".repeat(86)]) {
+        assert.throws(() => validateTickContext({
+          ...context(actionId),
+          inputs: [{
+            playerId: "player_a",
+            data: {},
+            actionId,
+          }],
+        }));
+      }
       assert.throws(() => validateTickContext({
         ...context("action-1"),
         inputs: [{
@@ -226,7 +240,15 @@ describe("Node.js Server SDK", () => {
           actionSchemaId: "invalid schema",
         }],
       }));
-      assert.throws(() => validateTickContext(context("界".repeat(86))));
+      assert.throws(() => validateTickContext({
+        ...context("action-1"),
+        inputs: [{
+          playerId: "player_a",
+          data: {},
+          actionId: "action-1",
+          actionSchemaId: null,
+        }],
+      }));
     });
 
     test("legacy flattened input fields normalize to data and empty inputs are rejected", () => {
@@ -286,6 +308,75 @@ describe("Node.js Server SDK", () => {
       ]) {
         actionResults = invalid;
         assert.equal((await postTick()).status, 500);
+      }
+    });
+
+    test("POST /tick passes actionId-only and paired game receipts through", async t => {
+      let emitActionResults = true;
+      const resultGame = {
+        ...mockGame,
+        tick(ctx, state) {
+          const result = {
+            state,
+            persist: false,
+          };
+          if (emitActionResults) {
+            result.actionResults = ctx.inputs
+              .filter(input => input.actionId !== undefined)
+              .map(input => ({
+                actionId: input.actionId,
+                status: input.data.reject ? "rejected" : "applied",
+                ...(input.data.reject ? { code: "INVALID_MOVE" } : {}),
+              }));
+          }
+          return result;
+        },
+      };
+      const resultServer = createGameServer(resultGame, 0, { gameId: "test-card-game" });
+      t.after(() => new Promise(resolve => resultServer.close(resolve)));
+      await once(resultServer, "listening");
+      const address = resultServer.address();
+      assert.ok(address && typeof address === "object");
+      const url = `http://127.0.0.1:${address.port}/tick`;
+      const postTick = inputs => fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ctx: { tick: 1, inputs, elapsedSeconds: 1 },
+          state: {},
+        }),
+      });
+
+      const accepted = await postTick([
+        { playerId: "player_a", data: {}, actionId: "human-action-1" },
+        {
+          playerId: "player_b",
+          data: { reject: true },
+          actionId: "paired-action-1",
+          actionSchemaId: "action.v1",
+        },
+      ]);
+      assert.equal(accepted.status, 200);
+      assert.deepEqual((await accepted.json()).actionResults, [
+        { actionId: "human-action-1", status: "applied" },
+        { actionId: "paired-action-1", status: "rejected", code: "INVALID_MOVE" },
+      ]);
+
+      emitActionResults = false;
+      const noGameReceipt = await postTick([
+        { playerId: "player_a", data: {}, actionId: "unreported-action-1" },
+      ]);
+      assert.equal(noGameReceipt.status, 200);
+      assert.equal(Object.hasOwn(await noGameReceipt.json(), "actionResults"), false);
+
+      for (const input of [
+        { playerId: "player_a", data: {}, actionSchemaId: "action.v1" },
+        { playerId: "player_a", data: {}, actionId: "" },
+        { playerId: "player_a", data: {}, actionId: null },
+        { playerId: "player_a", data: {}, actionId: "action-1", actionSchemaId: null },
+        { playerId: "player_a", data: {}, actionId: "action-1", actionSchemaId: "invalid schema" },
+      ]) {
+        assert.equal((await postTick([input])).status, 400);
       }
     });
 

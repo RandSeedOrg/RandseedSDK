@@ -1316,9 +1316,9 @@ impl TickContext {
                     "input.timestamp must be a non-negative safe integer.".into(),
                 ));
             }
-            if item.action_id.is_some() != item.action_schema_id.is_some() {
+            if item.action_schema_id.is_some() && item.action_id.is_none() {
                 return Err(SdkError::Validation(
-                    "actionId and actionSchemaId must be supplied together.".into(),
+                    "actionSchemaId requires actionId.".into(),
                 ));
             }
             if item

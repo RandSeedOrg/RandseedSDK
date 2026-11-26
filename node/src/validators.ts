@@ -251,12 +251,13 @@ export function normalizeTickContext(ctx: unknown): TickContext {
     }
     const hasActionId = Object.hasOwn(normalized, "actionId");
     const hasActionSchemaId = Object.hasOwn(normalized, "actionSchemaId");
-    if (hasActionId !== hasActionSchemaId) {
-      throw new Error("input.actionId and input.actionSchemaId must be supplied together.");
+    if (hasActionSchemaId && !hasActionId) {
+      throw new Error("input.actionSchemaId requires input.actionId.");
     }
     if (
       hasActionId &&
-      (!isValidProtocolKey(normalized.actionId) || !isValidActionSchemaId(normalized.actionSchemaId))
+      (!isValidProtocolKey(normalized.actionId) ||
+        (hasActionSchemaId && !isValidActionSchemaId(normalized.actionSchemaId)))
     ) {
       throw new Error("input action identifiers are invalid.");
     }
@@ -301,11 +302,14 @@ function validateTickContextShape(ctx: unknown): asserts ctx is TickContext {
       && (!isSafeInteger(input.timestamp) || input.timestamp < 0)) {
       throw new Error("input.timestamp must be a non-negative safe integer.");
     }
-    if (Object.hasOwn(input, "actionId") !== Object.hasOwn(input, "actionSchemaId")) {
-      throw new Error("input.actionId and input.actionSchemaId must be supplied together.");
+    const hasActionId = Object.hasOwn(input, "actionId");
+    const hasActionSchemaId = Object.hasOwn(input, "actionSchemaId");
+    if (hasActionSchemaId && !hasActionId) {
+      throw new Error("input.actionSchemaId requires input.actionId.");
     }
-    if (Object.hasOwn(input, "actionId")
-      && (!isValidProtocolKey(input.actionId) || !isValidActionSchemaId(input.actionSchemaId))) {
+    if (hasActionId
+      && (!isValidProtocolKey(input.actionId)
+        || (hasActionSchemaId && !isValidActionSchemaId(input.actionSchemaId)))) {
       throw new Error("input action identifiers are invalid.");
     }
   }
