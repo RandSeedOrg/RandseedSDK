@@ -68,13 +68,20 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
   full request including `expectedRevision`, same game/environment and
   idempotency key, 30-day receipt retention and uncertainty afterward. Note
   separate Room/data commits and lack of complete receipt validation. Preserve
-  Rust and wire behavior; link the protocol document to this design/tracker.
+  Rust and wire behavior. The design and tracker link each other; the shipped
+  protocol must not use relative links to these files because they are excluded
+  from the published npm package.
 - **Acceptance (Luna):** Inspect guidance against integrated GDT-SDK-01 and
   existing Worker contract; verify relative links using existing repository
   tooling if available. Report exact commands, snapshot and results. Docs alone
   do not prove runtime recovery.
 - **Stop:** Do not invent application merge/retry rules or modify other files.
-- **Evidence:** local UNVERIFIED; integration N/A; deployed UNVERIFIED.
+- **Evidence:** Initial coder commit `16aa5d41` was integrated as `e1175523`.
+  The full package dry-run passed, but revealed its protocol's new relative
+  design/tracker links would be broken in the package because `package.json`
+  excludes `docs/architecture`. Remove those links and rerun the affected
+  package check before marking this TODO complete. Deployed behavior remains
+  UNVERIFIED.
 
 ## Final evidence
 
