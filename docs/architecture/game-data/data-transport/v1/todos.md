@@ -91,6 +91,7 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
 
 SDK local and package checks passed as recorded above. Sol's combined review
 passed for RandSeedSDK snapshot `f879c461` and Gamecreator snapshot `759e557e`;
-only this evidence note changes after review. Publication remains pending.
-Git installation, deployed acceptance and committed-write/lost-response
-recovery remain UNVERIFIED.
+only evidence notes changed after review. Published for review as
+[RandSeedSDK PR 26](https://github.com/RandSeedOrg/RandseedSDK/pull/26).
+Git installation, deployed acceptance and committed-write/lost-response recovery
+remain UNVERIFIED.
