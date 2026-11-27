@@ -13,10 +13,10 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
 
 ## GDT-SDK-01: Align public SDK fetch error handling
 
-- **Status:** ready. **Dependencies:** none. **Owner:** Luna.
-- **Files and budget:** `node/src/game-data.ts` (120 lines, estimated 145;
+- **Status:** complete. **Dependencies:** none. **Owner:** Luna.
+- **Files and budget:** `node/src/game-data.ts` (120 lines, final 137;
   TypeScript public contract/application); `node/test/game-data.test.mjs`
-  (89 lines, estimated 190; contract tests). At most 300 changed lines total.
+  (89 lines, final 166; contract tests). 98 changed lines total.
 - **Flow and goal:** `PlatformDataClient` validates, serializes the existing
   request, invokes its selected fetch once, then parses/maps the response.
   Move serialization outside the fetch-only `try`. Export
@@ -43,11 +43,20 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
   UNVERIFIED unless separately tested.
 - **Stop:** Escalate if boundary preservation, behavior, dependencies or file
   budget requires a material design change. No push, PR, merge or deployment.
-- **Evidence:** local UNVERIFIED; integration UNVERIFIED; deployed UNVERIFIED.
+- **Evidence:** Coder commit `fc9081dbc0684a84fb885907fd4418d94b6990ff`,
+  based on `f5ceb808`, integrated as `2218063340e0dcf0951f44b668701550b96bc3ae`.
+  Integrated source and test SHA-256 values match the tested coder snapshot:
+  `e4b8c740bf34a94497171d6a97e6292041ef6838f95c89264c0da0730a59ce91`
+  and `d8c9d8037cefdc03d6fa8643f47a8f9f94e091251258d816d8d26441100e026d`.
+  With Node v24.14.1 and npm 11.11.0, the build and focused tests passed
+  (8/8), `npm test` passed (101/101), and `npm pack --dry-run` passed.
+  The new constructor is 4 lines, classifier 9, `call` 24, and added test
+  callbacks 10–20 lines; nesting is at most two levels. Deployed behavior and
+  committed-write/lost-response recovery remain UNVERIFIED.
 
 ## GDT-SDK-02: Align public recovery guidance
 
-- **Status:** blocked. **Dependencies:** GDT-SDK-01 integrated and checked.
+- **Status:** ready. **Dependencies:** GDT-SDK-01 integrated and checked.
   **Owner:** Luna.
 - **Files and budget:** `node/README.md` (432 lines, estimated 475; public SDK
   guidance); `protocol/game-data-v1.md` (184 lines, estimated 225; protocol
