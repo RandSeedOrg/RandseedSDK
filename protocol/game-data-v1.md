@@ -7,10 +7,7 @@ for a host that implements it. The current Gamecreator implementation remains
 disabled by default (`GAME_DATA_STORE_ENABLED=false`); only use it after the
 deployment owner confirms the gate is enabled. `DataPlugin` is a separate,
 disabled capability. SDK source/API presence is not a rollout or production
-availability guarantee. For TypeScript SDK error and recovery guidance, see the
-[approved design](../docs/architecture/game-data/data-transport/v1/architecture.md)
-and [implementation tracker](../docs/architecture/game-data/data-transport/v1/todos.md);
-these documents do not change the v1 wire contract.
+availability guarantee.
 
 The host derives canonical `gameId` and the complete deployment plus execution
 environment exclusively from a verified durable Room admission and startup
