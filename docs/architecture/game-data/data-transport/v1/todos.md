@@ -89,7 +89,8 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
 
 ## Final evidence
 
-SDK local and package checks passed as recorded above. Combined review and
-publication remain pending. Deployed acceptance and committed-write/lost-
-response recovery remain UNVERIFIED. One initial review and at most one
-in-scope correction/re-review are authorized.
+SDK local and package checks passed as recorded above. Sol's combined review
+passed for RandSeedSDK snapshot `f879c461` and Gamecreator snapshot `759e557e`;
+only this evidence note changes after review. Publication remains pending.
+Git installation, deployed acceptance and committed-write/lost-response
+recovery remain UNVERIFIED.
