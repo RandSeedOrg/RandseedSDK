@@ -56,11 +56,11 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
 
 ## GDT-SDK-02: Align public recovery guidance
 
-- **Status:** ready. **Dependencies:** GDT-SDK-01 integrated and checked.
+- **Status:** complete. **Dependencies:** GDT-SDK-01 integrated and checked.
   **Owner:** Luna.
-- **Files and budget:** `node/README.md` (432 lines, estimated 475; public SDK
-  guidance); `protocol/game-data-v1.md` (184 lines, estimated 225; protocol
-  guidance). At most 300 changed lines total.
+- **Files and budget:** `node/README.md` (432 lines, final 473; public SDK
+  guidance); `protocol/game-data-v1.md` (184 lines, final 223; protocol
+  guidance). 106 changed lines total.
 - **Goal:** Explain actual TypeScript fetch versus HTTP, local and body error
   behavior. A failed read is not absence; tombstones have revisions; on 409
   reconcile original business intent or stop instead of blindly using a newer
@@ -77,14 +77,19 @@ Wire protocol, Rust implementation, CAS and receipt semantics remain unchanged.
   do not prove runtime recovery.
 - **Stop:** Do not invent application merge/retry rules or modify other files.
 - **Evidence:** Initial coder commit `16aa5d41` was integrated as `e1175523`.
-  The full package dry-run passed, but revealed its protocol's new relative
-  design/tracker links would be broken in the package because `package.json`
-  excludes `docs/architecture`. Remove those links and rerun the affected
-  package check before marking this TODO complete. Deployed behavior remains
-  UNVERIFIED.
+  The package dry-run revealed the protocol's new relative design/tracker
+  links would be broken because `package.json` excludes `docs/architecture`.
+  Initial-validation correction `aaf15aca` was integrated as `6d50e26`; its
+  protocol SHA-256 is
+  `d6fbf76a7ecc5b2b575abcc2ba62345482666baa76bd2da8ff36ebe8d885af41`.
+  `npm pack --dry-run` passed on `6d50e26` (51 files); the protocol has no
+  `docs/architecture` references. The coder's targeted README protocol link
+  and recovery anchor checks passed. `git diff --check origin/main...HEAD`
+  passed. Deployed behavior remains UNVERIFIED.
 
 ## Final evidence
 
-SDK local, package integration, combined review and publication: UNVERIFIED.
-Deployed acceptance and committed-write/lost-response recovery: UNVERIFIED.
-One initial review and at most one in-scope correction/re-review are authorized.
+SDK local and package checks passed as recorded above. Combined review and
+publication remain pending. Deployed acceptance and committed-write/lost-
+response recovery remain UNVERIFIED. One initial review and at most one
+in-scope correction/re-review are authorized.
