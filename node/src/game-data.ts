@@ -28,6 +28,13 @@ export class PlatformDataError extends Error {
     this.retryable = status === 429 || (status >= 500 && status < 507 && code !== 'GAME_DATA_DISABLED');
   }
 }
+export class PlatformDataTransportError extends TypeError {
+  readonly code = 'GAME_DATA_TRANSPORT_ERROR';
+  constructor() {
+    super('Game data fetch failed with a TypeError; request outcome is unknown.');
+    this.name = 'PlatformDataTransportError';
+  }
+}
 export interface PlatformDataClientOptions { fetch?: typeof fetch; vhostMap?: Record<string, string>; }
 
 function assertJsonNumbers(value: unknown, seen = new WeakSet<object>()): void {
@@ -55,7 +62,17 @@ export class PlatformDataClient {
   private async call<T>(operation: string, request: object): Promise<T> {
     assertJsonNumbers(request);
     const base = (this.vhostMap["platform.data"] || "http://platform.data").replace(/\/+$/, "");
-    const response = await this.customFetch(base + '/' + operation, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocolVersion: GAME_DATA_PROTOCOL_VERSION, request }) });
+    const url = base + '/' + operation;
+    const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocolVersion: GAME_DATA_PROTOCOL_VERSION, request }) };
+    let response: Response;
+    try {
+      response = await this.customFetch(url, init);
+    } catch (error) {
+      let isTypeError: boolean;
+      try { isTypeError = error instanceof TypeError; } catch { throw error; }
+      if (isTypeError) throw new PlatformDataTransportError();
+      throw error;
+    }
     let payload: unknown;
     try { payload = await response.json(); } catch { payload = null; }
     if (!response.ok) {
