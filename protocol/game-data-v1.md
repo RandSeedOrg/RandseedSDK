@@ -27,8 +27,8 @@ principals, or R2 replay data. It is not a global lobby, real-time cross-room
 synchronization channel, general database, Result Unit query API, or public
 leaderboard. `platform.data` and a Room transition are separate Durable Object
 operations, not one transaction. A callback write is not a durable atomic
-outbox; use deterministic idempotency keys and retry the identical payload
-when safe. Exact committed-transition mirroring is unavailable in this stage.
+outbox; use deterministic idempotency keys and follow the recovery rules below.
+Exact committed-transition mirroring is unavailable in this stage.
 
 ## Wire envelope
 
@@ -57,9 +57,30 @@ must branch on that code, not message text. Common codes include
 `DATA_SCHEMA_CONFLICT`, `DATA_REVISION_CONFLICT`, `DATA_QUERY_UNSUPPORTED`,
 `DATA_CURSOR_INVALID`, `DATA_PAYLOAD_TOO_LARGE`, `DATA_CAPACITY_REACHED`,
 `DATA_AGGREGATE_LIMIT`, `DATA_AGGREGATE_OVERFLOW`, and `DATA_RATE_LIMITED`.
-TypeScript throws `PlatformDataError` (`status`, `code`, `retryable`); Rust
-returns `SdkError::PlatformData` and provides `retryable()` and
-`platform_data_code()`.
+TypeScript maps HTTP errors to `PlatformDataError` (`status`, `code`,
+`retryable`); Rust returns `SdkError::PlatformData` and provides `retryable()`
+and `platform_data_code()`.
+
+The TypeScript SDK also has client-side errors that are not wire errors. Local
+validation and JSON serialization happen before fetch and are not wrapped. Only
+a same-realm `TypeError` thrown or rejected at the fetch invocation becomes
+`PlatformDataTransportError` (a `TypeError` with code
+`GAME_DATA_TRANSPORT_ERROR` and fixed message
+`Game data fetch failed with a TypeError; request outcome is unknown.`); it has
+no HTTP status, cause, or `retryable` property. It reports an unknown request
+outcome, not whether the host received or committed a write. Other fetch errors,
+including `AbortError`, are rethrown unchanged. The SDK does not retry
+automatically.
+
+The fetch-only catch does not include response parsing. The Node client catches
+failures from `response.json()`: a non-2xx response with an unreadable body
+maps to `PlatformDataError` with
+`GAME_DATA_HTTP_ERROR`; a 2xx response with an unreadable or invalid success
+envelope maps to `PlatformDataError` with `GAME_DATA_INVALID_RESPONSE`. The
+body parsing error is not exposed. The client checks the outer
+`success`/`data` envelope but does not completely validate nested write-receipt
+fields at runtime. These Node-specific mappings do not change Rust behavior or
+the wire error codes.
 
 ## Schemas and documents
 
@@ -101,8 +122,26 @@ A mutation is one of:
 the batch commits atomically or rolls back. Every write includes a bounded
 `idempotencyKey`. Repeating the same key with the identical payload returns the
 original receipt. Reusing the key with changed content returns
-`DATA_REVISION_CONFLICT`. Retry the exact same request after a transient error;
-rebuild a fresh request after a revision conflict.
+`DATA_REVISION_CONFLICT`.
+
+## Errors and recovery
+
+A failed `get` is not the same as a successful `get` returning `null`; do not
+treat a read error as evidence that a record is absent. A mutation error is not
+a generic commit-status result: a fetch `TypeError` or unreadable response can
+leave the write outcome unknown. The specific HTTP code still matters.
+
+On `DATA_REVISION_CONFLICT` (HTTP 409), reread the record and reconcile the
+original business intent, or stop. Do not merely replace `expectedRevision`
+with the latest revision while replaying stale values. A deleted record retains
+its tombstone revision; recreating it must use that revision.
+
+If intentionally retrying a mutation with an unknown outcome, do so only
+within the 30-day receipt-retention window, using the same game and complete
+environment, idempotency key, and complete identical request, including all
+mutations and `expectedRevision`. After it expires, the outcome may remain
+unknown. Never infer that a failed or unreadable response means the mutation
+did not commit.
 
 ## Queries and aggregation
 

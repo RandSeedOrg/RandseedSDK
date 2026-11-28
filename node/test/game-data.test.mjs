@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PlatformClient, PlatformDataError } from '../dist/index.js';
+import { PlatformClient, PlatformDataError, PlatformDataTransportError } from '../dist/index.js';
+
+function assertTransportError(error) {
+  assert.ok(error instanceof PlatformDataTransportError);
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.name, 'PlatformDataTransportError');
+  assert.equal(error.code, 'GAME_DATA_TRANSPORT_ERROR');
+  assert.equal(error.message, 'Game data fetch failed with a TypeError; request outcome is unknown.');
+  for (const field of ['status', 'cause', 'retryable']) assert.equal(Object.hasOwn(error, field), false);
+  return true;
+}
 
 test('platform.data v1 covers schema, CAS receipts, indexed queries, and bounded aggregates', async () => {
   const calls = [];
@@ -86,4 +96,71 @@ test('platform.data rejects non-finite and unsafe integer numbers before fetch a
   assert.equal(requests.length, 1, 'invalid values must not cross the network boundary');
   assert.deepEqual((await client.data.get('scores', 'alice')).value, { score: 7 }, 'failed writes must preserve prior data');
   assert.equal(requests.length, 2);
+});
+
+test('platform.data wraps only fetch TypeErrors for reads and writes, with one fetch', async () => {
+  const scenarios = [
+    { label: 'read synchronous', rejected: false, invoke: client => client.data.get('scores', 'alice') },
+    { label: 'read rejected', rejected: true, invoke: client => client.data.get('scores', 'alice') },
+    { label: 'write synchronous', rejected: false, invoke: client => client.data.put({ idempotencyKey: 'one', collection: 'scores', id: 'alice', expectedRevision: 0, value: 1 }) },
+    { label: 'write rejected', rejected: true, invoke: client => client.data.put({ idempotencyKey: 'one', collection: 'scores', id: 'alice', expectedRevision: 0, value: 1 }) },
+  ];
+  for (const scenario of scenarios) {
+    let fetchCount = 0;
+    const client = new PlatformClient({ fetch: () => {
+      fetchCount++;
+      if (scenario.rejected) return Promise.reject(new TypeError('private fetch detail'));
+      throw new TypeError('private fetch detail');
+    } });
+    await assert.rejects(scenario.invoke(client), assertTransportError);
+    assert.equal(fetchCount, 1, scenario.label);
+  }
+});
+
+test('platform.data preserves fetch non-TypeError and unclassifiable rejection identity', async () => {
+  const abort = new Error('aborted');
+  abort.name = 'AbortError';
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  for (const original of [new Error('other failure'), abort, revoked.proxy]) {
+    const client = new PlatformClient({ fetch: () => Promise.reject(original) });
+    let rejection;
+    await client.data.get('scores', 'alice').then(
+      () => { throw new Error('expected fetch rejection'); },
+      error => { rejection = error; },
+    );
+    assert.equal(rejection, original);
+  }
+});
+
+test('platform.data keeps validation and cyclic serialization failures before fetch', async () => {
+  let fetchCount = 0;
+  const client = new PlatformClient({ fetch: () => { fetchCount++; throw new Error('fetch must not run'); } });
+  await assert.rejects(client.data.get('', 'alice'), TypeError);
+  await assert.rejects(client.data.put({ idempotencyKey: '', collection: 'scores', id: 'alice', expectedRevision: 0, value: 1 }), TypeError);
+  const cyclic = {};
+  cyclic.self = cyclic;
+  await assert.rejects(client.data.put({ idempotencyKey: 'cycle', collection: 'scores', id: 'alice', expectedRevision: 0, value: cyclic }), /circular/i);
+  assert.equal(fetchCount, 0);
+});
+
+test('platform.data preserves HTTP 409 and response-body failure mappings', async () => {
+  const conflict = new PlatformClient({ fetch: async () => ({ ok: false, status: 409, json: async () => ({ code: 'GAME_DATA_CONFLICT', message: 'private conflict detail' }) }) });
+  await assert.rejects(conflict.data.put({ idempotencyKey: 'conflict', collection: 'scores', id: 'alice', expectedRevision: 1, value: 2 }), error => {
+    assert.ok(error instanceof PlatformDataError);
+    assert.equal(error.status, 409);
+    assert.equal(error.code, 'GAME_DATA_CONFLICT');
+    assert.doesNotMatch(error.message, /private conflict detail/);
+    return true;
+  });
+  for (const response of [{ ok: false, status: 409, code: 'GAME_DATA_HTTP_ERROR' }, { ok: true, status: 200, code: 'GAME_DATA_INVALID_RESPONSE' }]) {
+    const client = new PlatformClient({ fetch: async () => ({ ok: response.ok, status: response.status, json: async () => { throw new SyntaxError('private body detail'); } }) });
+    await assert.rejects(client.data.get('scores', 'alice'), error => {
+      assert.ok(error instanceof PlatformDataError);
+      assert.equal(error.status, response.status);
+      assert.equal(error.code, response.code);
+      assert.doesNotMatch(error.message, /private body detail/);
+      return true;
+    });
+  }
 });

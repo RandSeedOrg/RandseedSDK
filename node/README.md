@@ -238,9 +238,9 @@ there is no automatic copy of Room SQLite, snapshots, KV, old Result Units,
 Blackjack results, legacy client-reported boards, profiles, principals, or R2
 replays. A `platform.data` call and a Room transition are separate Durable
 Object operations: they are not atomic and the callback is not a durable
-outbox. Use deterministic idempotency keys and retry only the identical
-payload after transient failures. Exact committed-transition mirroring is not
-available in this stage.
+outbox. The SDK does not automatically retry or reconcile them. See
+[Errors and recovery](#errors-and-recovery) before retrying a mutation. Exact
+committed-transition mirroring is not available in this stage.
 
 ```ts
 import { PlatformClient } from "@randseed/server-sdk";
@@ -305,9 +305,50 @@ pagination cursors per scope for 15 minutes. Rate is 120 requests per room per
 minute, with at most 10,000 tracked rooms per scope. These caps are part of the
 contract, not target capacity guarantees.
 
-TypeScript throws `PlatformDataError` with HTTP `status`, sanitized stable
-`code`, and `retryable`; branch on the code rather than message text. Do not
-retry conflicts, invalid inputs, or unsupported query shapes.
+### Errors and recovery
+
+These fetch-boundary distinctions describe the TypeScript Server SDK; Rust and
+the wire protocol are unchanged. The SDK never retries automatically.
+
+- Local validation and JSON serialization errors occur before fetch and are
+  not wrapped as transport errors. For example, invalid names/revisions and
+  cyclic values or other values that cannot be JSON-serialized remain local
+  failures.
+- A same-realm `TypeError` thrown or rejected by `fetch` becomes
+  `PlatformDataTransportError`, a `TypeError` with code
+  `GAME_DATA_TRANSPORT_ERROR` and fixed message
+  `Game data fetch failed with a TypeError; request outcome is unknown.` It has
+  no HTTP status, cause, or `retryable` property. It identifies only the fetch
+  failure boundary: it does not say whether the host received or committed a
+  write. Fetch `AbortError` and other non-`TypeError` values are rethrown
+  unchanged; an abort is not proof that a write did not commit.
+- HTTP non-2xx responses become `PlatformDataError` with HTTP `status`, a
+  sanitized stable `code`, and `retryable`; branch on `code`, not message text.
+  The fetch-only catch does not include response parsing. The SDK catches
+  response JSON parsing failures: an HTTP error with an unreadable body uses
+  `GAME_DATA_HTTP_ERROR`, while a successful HTTP response with an unreadable
+  or invalid success envelope uses
+  `GAME_DATA_INVALID_RESPONSE`. The original body parsing error is not exposed.
+  The SDK checks the outer `success`/`data` envelope but does not completely
+  validate nested write-receipt fields at runtime.
+- A failed read is not an absent record: only a successful `get` returning
+    `null` means no record was found. A thrown write error is not a generic
+    commit-status result: transport errors or unreadable responses can leave the
+    outcome unknown. The specific HTTP code still matters; for example, conflicts
+    require reconciliation below.
+
+On `DATA_REVISION_CONFLICT` (HTTP 409), reread the record and reconcile the
+original business intent, or stop. Do not take a stale value and merely replace
+its `expectedRevision` with the newly read revision. Tombstones retain their
+revision; recreating a deleted record must use that revision.
+
+If intentionally retrying a mutation whose outcome is unknown, do so only
+within the 30-day receipt-retention window, using the same game and complete
+environment, idempotency key, and complete identical request, including every
+mutation and `expectedRevision`. After that window the receipt may no longer be
+available and the outcome may remain unknown. A typed receipt in TypeScript is
+not a substitute for validating its nested fields or for the host's idempotency
+contract.
 
 ## Result Units
 
